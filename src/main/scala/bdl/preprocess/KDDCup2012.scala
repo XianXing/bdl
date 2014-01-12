@@ -19,11 +19,14 @@ object KDDCup2012 {
   val titleTokenFile = dataDir + "titleid_tokensid.txt"
   val userProfileFile = dataDir + "userid_profile.txt"
   
-  val outputDir = "output/KDDCup2012"
+  val testFeatureFile = dataDir + "test_features"
+  val testLabelFile = dataDir + "test_labels"
+  
+  val outputDir = "output/KDDCup2012/"
   val tmpDir = "/tmp/spark"
   val numCores = 16
   val numReducers = 16*numCores
-  val mode = "spark://mjolnir.egr.duke.edu:7077"
+  val mode = "local[16]"
   val jars = Seq("examples/target/scala-2.9.3/" +
   		"spark-examples-assembly-0.8.1-incubating.jar")
     
@@ -47,8 +50,9 @@ object KDDCup2012 {
       
 //    Read in the descriptionid_tokensid.txt file
     //num unique desriptions = 3171830, max desriptionID = 3171829
-    //if token_th = 20000, each token appears at least 81 times 
+    //if despTokenSize = 20000, each token appears at least 81 times 
     val numDesp = 3171829+1
+    val despTokenSize = 20000
     val despToken = new Array[Array[Int]](numDesp)
     val tokensMap = new HashMap[Int, Int]
     val despTokenRDD = sc.textFile(despTokenFile).map(line => {
@@ -58,7 +62,7 @@ object KDDCup2012 {
     }).persist(storageLevel)
     despTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
       .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(20000).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .take(despTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
     despTokenRDD.collect.par.foreach(pair => {
       despToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -66,8 +70,9 @@ object KDDCup2012 {
     
 //    Read in the purchasedkeywordid_tokensid.txt file
     //num unique keywords = 1249785, max keywordID = 1249784
-    //if token_th = 20000, each token appears at least 11 times
+    //if keywordTokenSize = 20000, each token appears at least 11 times
     val numKeywords = 1249784 + 1
+    val keywordTokenSize = 20000
     val keywordToken = new Array[Array[Int]](numKeywords)
     tokensMap.clear
     val keywordTokenRDD = sc.textFile(keywordTokenFile).map(line => {
@@ -77,7 +82,7 @@ object KDDCup2012 {
     }).persist(storageLevel)
     keywordTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
       .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(20000).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .take(keywordTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
     keywordTokenRDD.collect.par.foreach(pair => {
       keywordToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -85,8 +90,9 @@ object KDDCup2012 {
     
 //    Read in the queryid_tokensid.txt file
     //num unique queries: 26243606, max queryID = 26243605
-    //if token_th = 20000, each token appears at least 407 times
+    //if queryTokenSize = 20000, each token appears at least 407 times
     val numQueries = 26243605 + 1
+    val queryTokenSize = 20000
     val queryToken = new Array[Array[Int]](numQueries)
     tokensMap.clear
     val queryTokenRDD = sc.textFile(queryTokenFile).map(line => {
@@ -96,7 +102,7 @@ object KDDCup2012 {
     }).persist(storageLevel)
     queryTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
       .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(20000).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .take(queryTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
     queryTokenRDD.collect.par.foreach(pair => {
       queryToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -104,8 +110,9 @@ object KDDCup2012 {
     
 //    Read in the titleid_tokensid.txt file
     //num of unique titiles = 4051441, max titleID = 4051440 (246.6 MB)
-    //if token_th = 20000, each token appears at least 49 times
+    //if titleTokenSize = 20000, each token appears at least 49 times
     val numTitles = 4051440 + 1
+    val titleTokenSize = 20000
     val titleToken = new Array[Array[Int]](numTitles)
     tokensMap.clear
     val titleTokenRDD = sc.textFile(titleTokenFile).map(line => {
@@ -115,7 +122,7 @@ object KDDCup2012 {
     }).persist(storageLevel)
     titleTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
       .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(20000).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .take(titleTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
     titleTokenRDD.collect.par.foreach(pair => {
       titleToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -238,21 +245,24 @@ object KDDCup2012 {
       val advrCtr = advrCtrBC.value
       val feature = new ArrayBuilder.ofInt
       feature.sizeHint(30)
-      var offset = 0
-//  0. Click, 1. Impression, 2. AdID, 3. AdvertiserID, 4. Depth, 5. Position, 
-//  6. QueryID, 7. KeywordID, 8. TitleID, 9. DescriptionID, 10. UserID 
-      //Query, D=2000
-      feature ++= queryToken(arr(6))
-      offset += 2000
+      //intercept
+      feature += 0
+      var offset = 1
+      //Query, D=queryTokenSize
+      feature ++= queryToken(arr(6)).map(_+offset)
+      offset += queryTokenSize
       //Gender, D=3
       if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
       offset += 3
-      //Keyword, D=2000
+      //Keyword, D=keywordTokenSize
       feature ++= keywordToken(arr(7)).map(_+offset)
-      offset += 2000
-      //Title, D=2000
+      offset += keywordTokenSize
+      //Title, D=titleTokenSize
       feature ++= titleToken(arr(8)).map(_+offset)
-      offset += 2000
+      offset += titleTokenSize
+      //Description, D=despTokenSize
+      feature ++= despToken(arr(9)).map(_+offset)
+      offset += despTokenSize
       //Advertiser, D=39192
       feature += arr(3) + offset
       offset += 39192
@@ -323,8 +333,135 @@ object KDDCup2012 {
         count += 1
       }
       records
-    }).map(arr => arr(arr.length-1) + "\t" + arr.take(arr.length-1).mkString(" "))
-    .saveAsTextFile(outputDir)
+    }).saveAsObjectFile(outputDir + "train_obj")
+//    .map(arr => arr(arr.length-1) + "\t" + arr.take(arr.length-1).mkString(" "))
+//    .saveAsTextFile(outputDir)
+    
+    val test_feature = sc.textFile(testFeatureFile).map(_.split("\t"))
+      .map(arr => (arr(0).trim.toInt, arr.drop(2).map(_.toInt)))
+    val test_label = sc.textFile(testLabelFile).map(_.split("\t"))
+      .map(arr => (arr(0).trim.toInt, arr(1).split(",").take(2).map(_.toInt)))
+    val test = test_label.join(test_feature).map{
+      case(id, (arr1, arr2)) =>
+        val builder = new ArrayBuilder.ofInt
+        val length = arr1.length+arr2.length
+        assert(length == 11)
+        builder.sizeHint(length)
+        builder ++= arr1
+        builder ++= arr2
+        builder.result
+    }.flatMap( arr => {
+      val queryToken = queryTokenBC.value
+      val queryFreq = queryFreqBC.value
+      val queryCtr = queryCtrBC.value
+      val despToken = despTokenBC.value
+      val keywordToken = keywordTokenBC.value
+      val keywordCtr = keywordCtrBC.value
+      val titleToken = titleTokenBC.value
+      val userProfile = userProfileBC.value
+      val userFreq = userFreqBC.value
+      val userCtr = userCtrBC.value
+      val adFreq = adFreqBC.value
+      val adIDMap = adIDMapBC.value
+      val advrCtr = advrCtrBC.value
+      val feature = new ArrayBuilder.ofInt
+      feature.sizeHint(30)
+      //intercept
+      feature += 0
+      var offset = 1
+      //Query, D=queryTokenSize
+      feature ++= queryToken(arr(6)).map(_+offset)
+      offset += queryTokenSize
+      //Gender, D=3
+      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
+      offset += 3
+      //Keyword, D=keywordTokenSize
+      feature ++= keywordToken(arr(7)).map(_+offset)
+      offset += keywordTokenSize
+      //Title, D=titleTokenSize
+      feature ++= titleToken(arr(8)).map(_+offset)
+      offset += titleTokenSize
+      //Description, D=despTokenSize
+      feature ++= despToken(arr(9)).map(_+offset)
+      offset += despTokenSize
+      //Advertiser, D=39192
+      feature += arr(3) + offset
+      offset += 39192
+      //AdID, D=641707
+      if (adIDMap.contains(arr(2))) feature += adIDMap(arr(2)) + offset
+      offset += 641707
+      //age, D=6
+      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
+      offset += 6
+      //UserFreq, D=userFreqDim
+      feature += math.min(userFreq(arr(10))/userFreqBinSize, userFreqDim-1) + offset
+      offset += userFreqDim
+      //Position, D=3
+      feature += math.min(arr(5)-1, 2) + offset
+      offset += 3
+      //Depth, D=3
+      feature += math.min(arr(4)-1, 2) + offset
+      offset += 3
+      //QueryFreq, D=queryFreqDim
+      feature += math.min(queryFreq(arr(6))/queryFreqBinSize, queryFreqDim-1) + offset
+      offset += queryFreqDim
+      //AdFreq, D=adFreqDim
+      if (adIDMap.contains(arr(2))) {
+        feature += 
+          math.min(adFreq(adIDMap(arr(2)))/adFreqBinSize, adFreqDim-1) + offset
+      }
+      offset += adFreqDim
+      //QueryLength, D=20
+      feature += math.min(queryToken(arr(6)).length, 19) + offset
+      offset += 20
+      //TitleLength, D=30
+      feature += math.min(titleToken(arr(8)).length, 29) + offset
+      offset += 30
+      //DespLength, D=50
+      feature += math.min(despToken(arr(9)).length, 49) + offset
+      offset += 50
+      //QueryCtr, D=queryCtrBinDim
+      feature += 
+        math.min((queryCtr(arr(6))/queryCtrBinSize).toInt, queryCtrBinDim-1) + offset
+      offset += queryCtrBinDim
+      //UserCtr, D=userCtrBinDim
+      feature += 
+        math.min((userCtr(arr(10))/userCtrBinSize).toInt, userCtrBinDim-1) + offset
+      offset += userCtrBinDim
+      //AdvrCtr, D=advrCtrBinDim
+      if (arr(3) < advrCtr.length) {
+        feature += 
+          math.min((advrCtr(arr(3))/advrCtrBinSize).toInt, advrCtrBinDim-1) + offset
+      }
+      offset += advrCtrBinDim
+      //WordCtr, D=keywordCtrBinDim
+      feature += math.min((keywordCtr(arr(7))/keywordCtrBinSize).toInt, 
+        keywordCtrBinDim-1) + offset
+      offset += keywordCtrBinDim
+      
+      var click = arr(0)
+      var impression = arr(1)
+      val records = new Array[Array[Int]](impression)
+      if (click >= 1) feature += 1
+      else feature += -1
+      records(0) = feature.result
+      val length = records(0).length
+      impression -= 1
+      click -= 1
+      var count = 1
+      while (impression > 0) {
+        val record = new Array[Int](length)
+        Array.copy(records(0), 0, record, 0, length)
+        record(length-1) = if (click >= 1) 1 else -1
+        impression -= 1
+        click -= 1
+        records(count) = record
+        count += 1
+      }
+      records
+    }).saveAsObjectFile(outputDir + "test_obj")
+//    .map(arr => arr(arr.length-1) + "\t" + arr.take(arr.length-1).mkString(" "))
+//    .saveAsTextFile(outputDir + "test")
     
     System.exit(0)
   }

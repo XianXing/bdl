@@ -120,4 +120,5 @@ trait Settings {
   val BINARY_FEATURES_OPTION = "binary"
   val IS_OPTION = "IS"
   val NUM_SAMPLES_OPTION = "num_samples"
+  val SEQUENCE_FILE_OPTION = "seq"
 }

@@ -1,8 +1,6 @@
 package lr
 
-import utilities._
-import Functions._
-import preprocess.LR._
+
 import java.util._
 import java.io._
 import scala.util.Sorting._
@@ -11,8 +9,10 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkContext, HashPartitioner, storage}
 import org.apache.spark.SparkContext._
 import org.apache.spark.serializer.KryoRegistrator
-
 import org.apache.commons.cli._
+import utilities._
+import Functions._
+import preprocess.LR._
 
 object LR extends Settings {
 //  val trainingDataDir = "input/KDDCUP2010/kdda"
@@ -20,6 +20,7 @@ object LR extends Settings {
   val trainingDataDir = "../datasets/UCI_Adult/a9a"
   val testingDataDir = "../datasets/UCI_Adult/a9a.t"
   val isBinary = true
+  val isSeq = false
   val outputDir = "output/"
   val numCores = 1
   val numSlices = 10
@@ -88,6 +89,7 @@ object LR extends Settings {
     options.addOption(CD_OPTION, false, "coordinate descent option")
     options.addOption(INTERVAL_OPTION, true, "output interval")
     options.addOption(ARD_OPTION, false, "auto relevence determination option")
+    options.addOption(SEQUENCE_FILE_OPTION, false, "sequence file option")
     
     val parser = new GnuParser();
     val formatter = new HelpFormatter();
@@ -154,6 +156,7 @@ object LR extends Settings {
       else "tmp"
     val l1 = line.hasOption(L1_REGULARIZATION)
     val isBinary = line.hasOption(BINARY_FEATURES_OPTION)
+    val isSeq = line.hasOption(SEQUENCE_FILE_OPTION)
     val featureThre = if (line.hasOption(FEATURE_THRESHOLD_OPTION))
       line.getOptionValue(FEATURE_THRESHOLD_OPTION).toInt
       else 0
@@ -208,29 +211,69 @@ object LR extends Settings {
     val storageLevel = storage.StorageLevel.MEMORY_AND_DISK_SER
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
-    val rawTrainingData = sc.textFile(trainingDataDir)
     
     val featurePartitioner = new HashPartitioner(numReducers)
     val dataPartitioner = new HashPartitioner(numSlices)
     // to filter out infrequent features
-    val featureSet = rawTrainingData.flatMap(count(_, featureThre)).reduceByKey(_+_)
-    .filter(_._2 >= featureThre).map(_._1).collect.sorted
-    val numFeatures = featureSet.length + 1 //+1 because of the intercept
-    val featureMap = featureSet.zipWithIndex.toMap
-    val featureMapBC = sc.broadcast(featureMap)
+    val featureSet = 
+      if (featureThre > 0) {
+        sc.textFile(trainingDataDir).flatMap(count(_, featureThre)).reduceByKey(_+_)
+        .filter(_._2 >= featureThre).map(_._1).collect.sorted
+      }
+      else null
     
-    val trainingData = rawTrainingData.mapPartitions(_.map(line => {
-      ((math.random*numSlices).toInt, parseLine(line, featureMapBC.value, isBinary))
-     })).groupByKey(dataPartitioner)
-     .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
-     .persist(storageLevel)
-    val testingData = sc.textFile(testingDataDir).map(line =>
-      parseLine(line, featureMapBC.value, isBinary)).persist(storageLevel)
+    val featureMapBC = 
+      if (featureThre > 0) sc.broadcast(featureSet.zipWithIndex.toMap)
+      else null
+    
+    val rawTrainingData = 
+      if (isSeq) {
+        if (isBinary) {
+          sc.objectFile[Array[Int]](trainingDataDir).map(
+            arr => {
+              val bid = (math.random*numSlices).toInt
+              val response = arr.tail == 1
+              val feature = SparseVector(arr.dropRight(1))
+              (bid, (response, feature))
+            }
+          )
+        }
+        else null
+      }
+      else {
+        sc.textFile(trainingDataDir).map(line => {
+        val bid = (math.random*numSlices).toInt
+        if (featureThre > 0) (bid, parseLine(line, featureMapBC.value, isBinary))
+        else (bid, parseLine(line, isBinary))
+       })
+      }
+    val trainingData = rawTrainingData.groupByKey(dataPartitioner)
+       .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
+       .persist(storageLevel)
+    
+    val testingData = 
+      if (isSeq) {
+        if (isBinary) {
+          sc.objectFile[Array[Int]](testingDataDir)
+            .map(arr => (arr.tail == 1, SparseVector(arr.dropRight(1))))
+        }
+        else null
+      }
+      else {
+        sc.textFile(testingDataDir).map(line => {
+        if (featureThre > 0) parseLine(line, featureMapBC.value, isBinary)
+        else parseLine(line, isBinary)
+       })
+      }
+    
     val splitsStats = trainingData.mapValues{
-      case(responses, features) => (responses.length, features.rowMap.length)
+      case(responses, features) => (responses.length, features.numRows)
     }.collect
+    
+    //+1 because of the intercept
+    val numFeatures = trainingData.map(_._2._2.rowMap.last).reduce(math.max(_,_)) + 1
     val isSparse = splitsStats.forall(pair => pair._2._2 < 0.5*numFeatures)
-    val numTrain = splitsStats.map(pair => pair._2._1).reduce(_+_)
+    val numTrain = splitsStats.map(_._2._1).reduce(_+_)
     val testingDataPos = testingData.filter(_._1).persist(storageLevel)
     val testingDataNeg = testingData.filter(!_._1).persist(storageLevel)
     val numTestPos = testingDataPos.count.toInt
@@ -238,10 +281,11 @@ object LR extends Settings {
     val numTest = numTestPos + numTestNeg
     testingData.unpersist()
     val featureCount =
-      if (!exact) 
+      if (!exact) {
         trainingData.map{
           case (id, (responses, features)) => SparseVector(features.rowMap)
         }.reduce(_+_).toArray(numFeatures)
+      }
       else Array(0f)
     val localUpdate = featureCount.map(_>1)
     val localUpdateBC = sc.broadcast(localUpdate)
@@ -282,8 +326,9 @@ object LR extends Settings {
           val model = Model(features.numRows, gamma_init, admm)
           val lu = localUpdateBC.value
 //          model.runCD(responses, features, lu, lambda, maxInnerIter, th)
-          if (cg || lbfgs)
+          if (cg || lbfgs) {
             model.runCGQN(responses, features, maxInnerIter, th)
+          }
           else model.runCD(responses, features, maxInnerIter, th)
         }
       }
@@ -322,8 +367,9 @@ object LR extends Settings {
         }
         else {
           //limited-memory BFGS
-          if (iter > 1)
+          if (iter > 1) {
             Functions.getLBFGSDirection(deltaPara, gradient, gradient_old, direction)
+          }
           else Functions.copy(gradient, direction)
         }
         val directionBC = sc.broadcast(direction)
@@ -446,11 +492,13 @@ object LR extends Settings {
                 val prior = toLocal(gp, featureMap, lu)
                 val th = 0.001f
                 val maxIter = maxInnerIter
-                if (cg || lbfgs)
+                if (cg || lbfgs) {
                   model.runCGQN(responses, features, maxIter, th, cg, rho, admm, prior)
-                else
+                }
+                else {
                   model.runCD(responses, features, maxIter, th, rho, 
                     admm, l1, bohn, jaak, emBayes, ard, prior)
+                }
               }
             }
           }

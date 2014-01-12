@@ -124,7 +124,7 @@ object PMF extends Settings {
   }
   
   def updateGlobalPriors(stats: RDD[(Int, (Array[Float], Array[Float], List[Int]))], 
-      l1: Boolean, max_norm: Boolean, lambda: Float, dataPartitioner: HashPartitioner) = {
+      l1: Boolean, max_norm: Boolean, lambda: Float, part: HashPartitioner) = {
     
     def agregate(p1: (Array[Float], Array[Float], List[Int]), 
         p2: (Array[Float], Array[Float], List[Int])) = {
@@ -139,7 +139,7 @@ object PMF extends Settings {
       }
     }
     
-    stats.reduceByKey(dataPartitioner, (p1, p2) => agregate(p1, p2)).mapValues{
+    stats.reduceByKey(part, (p1, p2) => agregate(p1, p2)).mapValues{
       // update the global parameters
       case(weightedSum, gammaSum, pids) => {
         if (pids.length == 1) (Array.ofDim[Float](weightedSum.length), pids)
