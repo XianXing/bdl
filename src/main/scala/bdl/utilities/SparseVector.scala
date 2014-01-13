@@ -15,10 +15,11 @@ class SparseVector(val indices : Array[Int], val values : Array[Float])
   
   def getZippedPairs = indices.zip(values)
   
-  def toArray(length: Int = this.size) = {
+  def toArray(length: Int = size) = {
     val array = new Array[Float](length)
+    val values = getValues
     var l = 0
-    while (l < length) {
+    while (l < size) {
       array(indices(l)) = values(l)
       l += 1
     }

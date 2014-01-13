@@ -1,6 +1,6 @@
 package utilities
 
-import scala.collection.mutable.{HashMap, HashSet, ArrayBuilder}
+import scala.collection.mutable.{HashMap, HashSet}
 
 class SparseMatrix (
     val row_ptr : Array[Int], val col_idx : Array[Int], val value_r : Array[Float],
@@ -117,7 +117,6 @@ object SparseMatrix {
   def apply(records: Array[Record]) = {
     //build a sparse matrix implemented with both compressed sparse row (CSR) 
     //and compressed sparse column (CSC) formats
-
     val nnz = records.length
     val rowSet = new HashSet[Int]; val colSet = new HashSet[Int]
     val row_idx = new Array[Int](nnz); val col_idx = new Array[Int](nnz)
@@ -190,6 +189,8 @@ object SparseMatrix {
   def apply(featureMatrix: Array[SparseVector]) = {
     //sparse matrix implemented with compressed sparse row (CSR) format
     val numCols = featureMatrix.length
+    System.err.println("num of data: " + numCols)
+    System.out.println("num of data: " + numCols)
     val isBinary = featureMatrix(0).isBinary
     val rowSet = new HashSet[Int]
     var nnz = 0
@@ -215,11 +216,9 @@ object SparseMatrix {
       rowMap.put(rowArray(p), p)
       p += 1
     }
-    val col_idx = new Array[Int](nnz)
-    val row_idx = new Array[Int](nnz)
-    val value_r = if (isBinary) null else new Array[Float](nnz)
+    System.err.println("nnz: " + nnz)
+    System.out.println("nnz: " + nnz)
     n = 0
-    var i = 0
     while (n < numCols) {
       val rowIndices = featureMatrix(n).getIndices
       val values = if (isBinary) null else featureMatrix(n).getValues
@@ -228,10 +227,6 @@ object SparseMatrix {
       while (l < length) {
         val p = rowMap.getOrElse(rowIndices(l), -1)
         row_ptr(p+1) += 1
-        row_idx(i) = p 
-        col_idx(i) = n
-        if (!isBinary) value_r(i) = values(l)
-        i += 1
         l += 1
       }
       n += 1
@@ -241,44 +236,32 @@ object SparseMatrix {
       row_ptr(p+1) += row_ptr(p)
       p += 1
     }
-    
-    def swap(i: Int, j: Int) = {
-      var tmp_int = col_idx(i); col_idx(i) = col_idx(j); col_idx(j) = tmp_int
-      tmp_int = row_idx(i); row_idx(i) = row_idx(j); row_idx(j) = tmp_int
-      if (!isBinary) {
-        var tmp_float = value_r(i); value_r(i) = value_r(j); value_r(j) = tmp_float
+    val col_idx = new Array[Int](nnz)
+//    val col_idx = ByteBuffer.allocateDirect(nnz).order(ByteOrder.nativeOrder)
+//      .asIntBuffer.array
+    val value_r = if (isBinary) null else new Array[Float](nnz)
+    n = 0
+    while (n < numCols) {
+      val rowIndices = featureMatrix(n).getIndices
+      val values = if (isBinary) null else featureMatrix(n).getValues
+      val length = rowIndices.length
+      var l = 0
+      while (l < length) {
+        val p = rowMap.getOrElse(rowIndices(l), -1)
+        val i = row_ptr(p)
+        row_ptr(p) += 1
+        col_idx(i) = n
+        if (!isBinary) value_r(i) = values(l)
+        l += 1
       }
+      n += 1
     }
-    
-    def lessThan(i: Int, j: Int) = {
-      (row_idx(i)<row_idx(j)) || (row_idx(i)==row_idx(j)&&col_idx(i)<col_idx(j))
+    p = numRows
+    while (p > 0) { 
+      row_ptr(p) = row_ptr(p-1)
+      p -= 1
     }
-    
-    def quickSort(start: Int, end: Int) : Unit = {
-      if (start < end) {
-        val pivot = (start+end)/2
-        swap(start, pivot)
-        var left = start+1
-        var right = end
-        while (left < right) {
-          while (left < right && lessThan(left, start)) left += 1
-          while (right > left && (!lessThan(right, start))) right -= 1
-          if (left < right) swap(left, right)
-        }
-        if (lessThan(left, start)) {
-          swap(start, left)
-          quickSort(start, left-1)
-          quickSort(left+1, end)
-        }
-        else {
-          swap(start, left-1)
-          quickSort(start, left-2)
-          quickSort(left, end)
-        }
-      }
-    }
-    
-    quickSort(0, nnz-1)
+    row_ptr(0) = 0
     new SparseMatrix(row_ptr, col_idx, value_r, null, null, null, rowArray, null, 
         numRows, numCols)
   }

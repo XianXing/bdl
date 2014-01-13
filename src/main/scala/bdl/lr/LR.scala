@@ -1,7 +1,5 @@
 package lr
 
-
-import java.util._
 import java.io._
 import scala.util.Sorting._
 import scala.collection.mutable.ArrayBuilder
@@ -180,7 +178,7 @@ object LR extends Settings {
 //    System.setProperty("spark.serializer", 
 //        "org.apache.spark.serializer.KryoSerializer")
 //    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
-//    System.setProperty("spark.kryoserializer.buffer.mb", "16")
+//    System.setProperty("spark.kryoserializer.buffer.mb", "720")
 //    System.setProperty("spark.kryo.referenceTracking", "false")
     
     var jobName = "DIST_LR"
@@ -195,7 +193,7 @@ object LR extends Settings {
       else {
         jobName += "_CD"
         if (bohn) jobName += "_Bohning"
-        else if (jaak) jobName += "_Jaakkola" 
+        else if (jaak) jobName += "_Jaakkola"
         else jobName += "_Taylor"
         if (l1) jobName += "_l1"
         if (emBayes) {
@@ -217,7 +215,7 @@ object LR extends Settings {
     // to filter out infrequent features
     val featureSet = 
       if (featureThre > 0) {
-        sc.textFile(trainingDataDir).flatMap(count(_, featureThre)).reduceByKey(_+_)
+        sc.textFile(trainingDataDir).flatMap(count(_)).reduceByKey(_+_)
         .filter(_._2 >= featureThre).map(_._1).collect.sorted
       }
       else null
@@ -232,7 +230,7 @@ object LR extends Settings {
           sc.objectFile[Array[Int]](trainingDataDir).map(
             arr => {
               val bid = (math.random*numSlices).toInt
-              val response = arr.tail == 1
+              val response = arr.last == 1
               val feature = SparseVector(arr.dropRight(1))
               (bid, (response, feature))
             }
@@ -255,7 +253,7 @@ object LR extends Settings {
       if (isSeq) {
         if (isBinary) {
           sc.objectFile[Array[Int]](testingDataDir)
-            .map(arr => (arr.tail == 1, SparseVector(arr.dropRight(1))))
+            .map(arr => (arr.last == 1, SparseVector(arr.dropRight(1))))
         }
         else null
       }
@@ -265,13 +263,14 @@ object LR extends Settings {
         else parseLine(line, isBinary)
        })
       }
-    
+    testingData.persist(storageLevel)
     val splitsStats = trainingData.mapValues{
-      case(responses, features) => (responses.length, features.numRows)
+      case(responses, features) => (responses.length, features.rowMap.length)
     }.collect
     
-    //+1 because of the intercept
-    val numFeatures = trainingData.map(_._2._2.rowMap.last).reduce(math.max(_,_)) + 1
+    val numFeatures = 
+      if (featureThre > 0) featureSet.size + 1 //+1 because of the intercept
+      else trainingData.map(_._2._2.rowMap.last).reduce(math.max(_,_)) + 1
     val isSparse = splitsStats.forall(pair => pair._2._2 < 0.5*numFeatures)
     val numTrain = splitsStats.map(_._2._1).reduce(_+_)
     val testingDataPos = testingData.filter(_._1).persist(storageLevel)
@@ -282,9 +281,16 @@ object LR extends Settings {
     testingData.unpersist()
     val featureCount =
       if (!exact) {
-        trainingData.map{
-          case (id, (responses, features)) => SparseVector(features.rowMap)
-        }.reduce(_+_).toArray(numFeatures)
+        if (isSparse) {
+          trainingData.map{
+            case (id, (responses, features)) => SparseVector(features.rowMap)
+          }.reduce(_+_).toArray(numFeatures)
+        }
+        else {
+          trainingData.map{
+            case (id, (responses, features)) => Vector(features.rowMap, numFeatures)
+          }.reduce(_+=_).toArray
+        }
       }
       else Array(0f)
     val localUpdate = featureCount.map(_>1)
@@ -292,9 +298,11 @@ object LR extends Settings {
     val numLocalUpdate = localUpdate.count(p => p)
     val percentage = 100.0*numLocalUpdate/numFeatures
     println("number of: features " + numFeatures + "; training data " + numTrain + 
-      "; testing data " + numTest)
+      "; testing data " + numTest + " (" + numTestPos + "," + numTestNeg + ")")
+    println("numLocalUpdate: " + numLocalUpdate + ": " + percentage + "%")
+    bwLog.write("numLocalUpdate: " + numLocalUpdate + ": " + percentage + "%\n")
     bwLog.write("number of: features " + numFeatures + "; training data " + numTrain 
-      + "; testing data " + numTest + '\n')
+      + "; testing data " + numTest + " (" + numTestPos + "," + numTestNeg + ")\n")
     splitsStats.foreach(pair => println("partition " + pair._1 + 
       " has " + pair._2._1 + " samples and " + pair._2._2 + " features"))
     println("sparse update: " + isSparse)
@@ -324,8 +332,6 @@ object LR extends Settings {
         }
         else {
           val model = Model(features.numRows, gamma_init, admm)
-          val lu = localUpdateBC.value
-//          model.runCD(responses, features, lu, lambda, maxInnerIter, th)
           if (cg || lbfgs) {
             model.runCGQN(responses, features, maxInnerIter, th)
           }

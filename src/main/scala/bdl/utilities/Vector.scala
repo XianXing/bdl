@@ -166,6 +166,12 @@ object Vector {
     return new Vector(elements)
   }
   
+  def apply(index: Array[Int], length: Int): Vector = {
+    val elements = new Array[Float](length)
+    index.foreach(i => elements(i) = 1f)
+    return new Vector(elements)
+  }
+  
   def apply(arr : Array[(Int, Float)], P : Int): Vector = {
     val elements = new Array[Float](P)
     arr.foreach(pair => elements(pair._1) = pair._2)

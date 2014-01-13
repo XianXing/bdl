@@ -165,7 +165,7 @@ object Functions {
   }
   
   def getGradient(data : Pair[Boolean, SparseVector], w : Vector) 
-  		: SparseVector = {
+                  : SparseVector = {
     val features = data._2
     val response = 
       if (data._1) 1
@@ -174,7 +174,7 @@ object Functions {
   }
   
   def getGradient(data : Pair[Boolean, SparseVector], w : SparseVector) 
-  		: SparseVector = {
+                  : SparseVector = {
     val features = data._2
     val response = 
       if (data._1) 1

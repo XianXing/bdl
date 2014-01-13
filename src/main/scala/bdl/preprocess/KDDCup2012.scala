@@ -1,7 +1,6 @@
 package preprocess
 
-import scala.collection.mutable.HashMap
-import scala.collection.mutable.ArrayBuilder
+import scala.collection.mutable.{HashMap, ArrayBuilder}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkContext, HashPartitioner, storage}
@@ -369,37 +368,37 @@ object KDDCup2012 {
       //intercept
       feature += 0
       var offset = 1
-      //Query, D=queryTokenSize
+      //Query's token, D=queryTokenSize
       feature ++= queryToken(arr(6)).map(_+offset)
       offset += queryTokenSize
-      //Gender, D=3
+      //User's gender, D=3
       if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
       offset += 3
-      //Keyword, D=keywordTokenSize
+      //Keyword's token, D=keywordTokenSize
       feature ++= keywordToken(arr(7)).map(_+offset)
       offset += keywordTokenSize
-      //Title, D=titleTokenSize
+      //Title's token, D=titleTokenSize
       feature ++= titleToken(arr(8)).map(_+offset)
       offset += titleTokenSize
-      //Description, D=despTokenSize
+      //Description's token, D=despTokenSize
       feature ++= despToken(arr(9)).map(_+offset)
       offset += despTokenSize
-      //Advertiser, D=39192
+      //Advertiser's ID, D=39192
       feature += arr(3) + offset
       offset += 39192
-      //AdID, D=641707
+      //Ads' ID, D=641707
       if (adIDMap.contains(arr(2))) feature += adIDMap(arr(2)) + offset
       offset += 641707
-      //age, D=6
+      //User's age, D=6
       if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
       offset += 6
       //UserFreq, D=userFreqDim
       feature += math.min(userFreq(arr(10))/userFreqBinSize, userFreqDim-1) + offset
       offset += userFreqDim
-      //Position, D=3
+      //Ads' position, D=3
       feature += math.min(arr(5)-1, 2) + offset
       offset += 3
-      //Depth, D=3
+      //Ads' depth, D=3
       feature += math.min(arr(4)-1, 2) + offset
       offset += 3
       //QueryFreq, D=queryFreqDim
@@ -411,13 +410,13 @@ object KDDCup2012 {
           math.min(adFreq(adIDMap(arr(2)))/adFreqBinSize, adFreqDim-1) + offset
       }
       offset += adFreqDim
-      //QueryLength, D=20
+      //Query token's length, D=20
       feature += math.min(queryToken(arr(6)).length, 19) + offset
       offset += 20
-      //TitleLength, D=30
+      //Title token's length, D=30
       feature += math.min(titleToken(arr(8)).length, 29) + offset
       offset += 30
-      //DespLength, D=50
+      //Description's length, D=50
       feature += math.min(despToken(arr(9)).length, 49) + offset
       offset += 50
       //QueryCtr, D=queryCtrBinDim
@@ -462,7 +461,6 @@ object KDDCup2012 {
     }).saveAsObjectFile(outputDir + "test_obj")
 //    .map(arr => arr(arr.length-1) + "\t" + arr.take(arr.length-1).mkString(" "))
 //    .saveAsTextFile(outputDir + "test")
-    
     System.exit(0)
   }
 }
