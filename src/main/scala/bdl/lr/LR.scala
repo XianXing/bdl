@@ -215,7 +215,7 @@ object LR extends Settings {
     // to filter out infrequent features
     val featureSet = 
       if (featureThre > 0) {
-        sc.textFile(trainingDataDir).flatMap(count(_)).reduceByKey(_+_)
+        sc.textFile(trainingDataDir).flatMap(count(_, featureThre)).reduceByKey(_+_)
         .filter(_._2 >= featureThre).map(_._1).collect.sorted
       }
       else null
@@ -246,7 +246,7 @@ object LR extends Settings {
        })
       }
     val trainingData = rawTrainingData.groupByKey(dataPartitioner)
-       .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
+       .mapValues(seq => (seq.map(_._1).toArray, CSRMatrix(seq.map(_._2).toArray)))
        .persist(storageLevel)
     
     val testingData = 

@@ -46,16 +46,15 @@ object Functions {
     nume/(deno + lambda)
   }
   
-  def getGrad(responses: Array[Boolean], features: SparseMatrix, w: Array[Float], 
+  def getGrad(responses: Array[Boolean], features: CSRMatrix, w: Array[Float], 
       gradient: Array[Float])= {
     val numData = responses.length
     val numFeatures = w.length
     val ywtx = new Array[Float](numData)
     Model.getYWTX(responses, features, w, ywtx)
-    val ptr = features.row_ptr
-    val idx = features.col_idx
-    val value = features.value_r
-    val isBinary = value == null
+    val indices = features.indices
+    val values = features.values
+    val isBinary = values == null
     var n = 0; var obj = 0.0
     while (n < numData) {
       val exp = Functions.exp(-ywtx(n)).toFloat
@@ -66,9 +65,12 @@ object Functions {
     }
     var p = 0
     while (p < numFeatures) {
-      var i = ptr(p)
+      var i = 0
+      val idx = indices(p)
+      val value = if (isBinary) null else values(p)
+      val length = idx.length
       gradient(p) = 0
-      while (i < ptr(p+1)) {
+      while (i < length) {
         val n = idx(i)
         if (responses(n) && isBinary) gradient(p) += (1 - ywtx(n))
         else if (responses(n) && !isBinary) gradient(p) += (1 - ywtx(n))*value(i)
@@ -81,19 +83,21 @@ object Functions {
     obj
   }
   
-  def getHessian(features: SparseMatrix, w: Array[Float], u: Array[Float]) = {
+  def getHessian(features: CSRMatrix, w: Array[Float], u: Array[Float]) = {
     val numData = features.numCols
     val numFeatures = features.numRows
-    val ptr = features.row_ptr
-    val idx = features.col_idx
-    val value = features.value_r
-    val isBinary = value == null
+    val indices = features.indices
+    val values = features.values
+    val isBinary = values == null
     val wtx = new Array[Float](numData)
     val utx = new Array[Float](numData)
     var p = 0
     while (p < numFeatures) {
-      var i = ptr(p)
-      while (i < ptr(p+1)) {
+      var i = 0
+      val idx = indices(p)
+      val value = if (isBinary) null else values(p)
+      val length = idx.length
+      while (i < length) {
         val n = idx(i)
         if (isBinary) {
           wtx(n) += w(p)
@@ -165,7 +169,7 @@ object Functions {
   }
   
   def getGradient(data : Pair[Boolean, SparseVector], w : Vector) 
-                  : SparseVector = {
+  		: SparseVector = {
     val features = data._2
     val response = 
       if (data._1) 1
@@ -174,7 +178,7 @@ object Functions {
   }
   
   def getGradient(data : Pair[Boolean, SparseVector], w : SparseVector) 
-                  : SparseVector = {
+  		: SparseVector = {
     val features = data._2
     val response = 
       if (data._1) 1

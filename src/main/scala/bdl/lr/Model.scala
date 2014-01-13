@@ -95,7 +95,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     obj
   }
   
-  def getPred(features: SparseMatrix) = {
+  def getPred(features: CSRMatrix) = {
     val numData = features.numCols
     val pred = new Array[Float](numData)
     Model.getWTX(features, para, pred)
@@ -117,12 +117,11 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     }
   }
   
-  def jaakkola(responses: Array[Boolean], features: SparseMatrix, 
+  def jaakkola(responses: Array[Boolean], features: CSRMatrix, 
       prec: Array[Float], coefA: Array[Float], residual: Array[Float]) = {
     
-    val ptr = features.row_ptr
-    val idx = features.col_idx
-    val value = features.value_r
+    val indices = features.indices
+    val values = features.values
     val numData = responses.length
     var n = 0
     while (n < numData) {
@@ -130,11 +129,14 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
       residual(n) = 0f
       n += 1
     }
-    if (value == null) {
+    if (values == null) {
       var p = 0 
       while (p < numFeatures) {
-        var i = ptr(p)
-        while (i < ptr(p+1)) {
+        var i = 0
+        val idx = indices(p)
+        val value =values(p)
+        val length = idx.length
+        while (i < length) {
           val n = idx(i)
           coefA(n) += para(p)
           residual(n) += 1/prec(p)
@@ -146,8 +148,11 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     else {
       var p = 0 
       while (p < numFeatures) {
-        var i = ptr(p)
-        while (i < ptr(p+1)) {
+        var i = 0
+        val idx = indices(p)
+        val value =values(p)
+        val length = idx.length
+        while (i < length) {
           val n = idx(i)
           coefA(n) += para(p)*value(i)
           residual(n) += value(i)*value(i)/prec(p)
@@ -172,7 +177,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     obj
   }
   
-  def bohning(responses: Array[Boolean], features: SparseMatrix,
+  def bohning(responses: Array[Boolean], features: CSRMatrix,
       coefA: Array[Float], residual: Array[Float]) = {
     val numData = responses.length
     var n = 0
@@ -199,7 +204,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     obj
   }
   
-  def taylor(responses: Array[Boolean], features: SparseMatrix,
+  def taylor(responses: Array[Boolean], features: CSRMatrix,
       coefA: Array[Float], residual: Array[Float]) = {
     
     val numData = coefA.length
@@ -228,13 +233,14 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     obj
   }
   
-  def getUpdateStats(p: Int, ptr: Array[Int], idx: Array[Int], value: Array[Float],
+  def getUpdateStats(p: Int, idx: Array[Int], value: Array[Float],
       coefA: Array[Float], residual: Array[Float], stats: Array[Float]) = {
     val isBinary = value == null
-    var i = ptr(p)
+    val length = idx.length
     stats(0) = 0f
     stats(1) = 0f
-    while (i < ptr(p+1)) {
+    var i = 0
+    while (i < length) {
       val n = idx(i)
       if (isBinary) {
         stats(0) += residual(n)+coefA(n)*para(p)
@@ -248,26 +254,27 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     }
   }
   
-  def updatePara(responses: Array[Boolean], features: SparseMatrix, prec: Array[Float],
+  def updatePara(responses: Array[Boolean], features: CSRMatrix, prec: Array[Float],
       globalPara: Array[Float], coefA: Array[Float], residual: Array[Float],
       rho: Float, l1: Boolean, jaak: Boolean, emBayes: Boolean) = {
     
-    val ptr = features.row_ptr
-    val idx = features.col_idx
-    val value = features.value_r
-    val isBinary = value == null
+    val indices = features.indices
+    val values = features.values
+    val isBinary = values == null
     var p = 0
     val stats = new Array[Float](2)
     while (p < numFeatures) {
-      getUpdateStats(p, ptr, idx, value, coefA, residual, stats)
+      val idx = indices(p)
+      val value = if (isBinary) null else values(p)
+      getUpdateStats(p, idx, value, coefA, residual, stats)
       //+ 1e-5f for numerical stability
       val newPrec = stats(1) + rho*gamma(p) + 1e-5f
       val newPara = (stats(0) + rho*gamma(p)*globalPara(p))/newPrec
       if (emBayes || jaak) prec(p) = newPrec
       val diff = para(p) - newPara
       if (math.abs(diff) > 1e-5f) {
-        var i = ptr(p)
-        while (i < ptr(p+1)) {
+        var i = 0
+        while (i < idx.length) {
           val n = idx(i)
           if (isBinary) residual(n) += coefA(n)*diff
           else residual(n) += coefA(n)*diff*value(i)
@@ -307,7 +314,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     }
   }
   
-  def runCD(responses: Array[Boolean], features: SparseMatrix, 
+  def runCD(responses: Array[Boolean], features: CSRMatrix, 
       maxIter: Int, thre: Float, rho: Float = 1f, 
       admm: Boolean = false, l1: Boolean = false, 
       bohn: Boolean = false, jaak: Boolean = false, 
@@ -354,7 +361,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     (this, iter, obj, squaredDiff)
   }
   
-  def runCGQN(responses: Array[Boolean], features: SparseMatrix, 
+  def runCGQN(responses: Array[Boolean], features: CSRMatrix, 
       maxIter: Int, thre: Float, cg: Boolean = true, rho: Float = 1f, 
       admm: Boolean = false, globalPara: Array[Float] = new Array[Float](numFeatures)) 
     = {
@@ -422,17 +429,19 @@ object Model {
     new Model(para, null, null)
   }
   
-  def getYWTX(responses: Array[Boolean], features: SparseMatrix, para: Array[Float],
+  def getYWTX(responses: Array[Boolean], features: CSRMatrix, para: Array[Float],
       ywtx: Array[Float]) = {
-    val ptr = features.row_ptr
-    val idx = features.col_idx
-    val value = features.value_r
-    val isBinary = value == null
-    val numFeatures = ptr.length - 1
+    val indices = features.indices
+    val values = features.values
+    val isBinary = values == null
+    val numFeatures = features.numRows
     var p = 0 
     while (p < numFeatures) {
-      var i = ptr(p)
-      while (i < ptr(p+1)) {
+      var i = 0
+      val idx = indices(p)
+      val value = if (isBinary) null else values(p)
+      val length = idx.length
+      while (i < length) {
         val n = idx(i)
         if (isBinary && responses(n)) ywtx(n) += para(p)
         else if (isBinary && !responses(n)) ywtx(n) -= para(p)
@@ -444,16 +453,17 @@ object Model {
     }
   }
   
-  def getWTX(features: SparseMatrix, para: Array[Float], wtx: Array[Float]) = {
-    val ptr = features.row_ptr
-    val idx = features.col_idx
-    val value = features.value_r
-    val numFeatures = ptr.length - 1
-    if (value == null) {
+  def getWTX(features: CSRMatrix, para: Array[Float], wtx: Array[Float]) = {
+    val indices = features.indices
+    val values = features.values
+    val numFeatures = features.numRows
+    if (values == null) {
       var p = 0 
       while (p < numFeatures) {
-        var i = ptr(p)
-        while (i < ptr(p+1)) {
+        var i = 0
+        val idx = indices(p)
+        val length = idx.length
+        while (i < length) {
           val n = idx(i)
           wtx(n) += para(p)
           i += 1
@@ -464,8 +474,11 @@ object Model {
     else {
       var p = 0 
       while (p < numFeatures) {
-        var i = ptr(p)
-        while (i < ptr(p+1)) {
+        var i = 0
+        val idx = indices(p)
+        val value = values(p)
+        val length = idx.length
+        while (i < length) {
           val n = idx(i)
           wtx(n) += value(i)*para(p)
           i += 1
