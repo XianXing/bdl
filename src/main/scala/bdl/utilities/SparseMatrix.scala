@@ -206,6 +206,8 @@ object SparseMatrix {
       }
       n += 1
     }
+    System.err.println("nnz: " + nnz)
+    System.out.println("nnz: " + nnz)
     val numRows = rowSet.size
     val row_ptr = Array.ofDim[Int](numRows+1)
     val rowMap = new HashMap[Int, Int]
@@ -216,8 +218,6 @@ object SparseMatrix {
       rowMap.put(rowArray(p), p)
       p += 1
     }
-    System.err.println("nnz: " + nnz)
-    System.out.println("nnz: " + nnz)
     n = 0
     while (n < numCols) {
       val rowIndices = featureMatrix(n).getIndices
@@ -257,7 +257,7 @@ object SparseMatrix {
       n += 1
     }
     p = numRows
-    while (p > 0) { 
+    while (p > 0) {
       row_ptr(p) = row_ptr(p-1)
       p -= 1
     }

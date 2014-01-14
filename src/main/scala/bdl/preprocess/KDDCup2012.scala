@@ -46,13 +46,13 @@ object KDDCup2012 {
     
     val storageLevel = storage.StorageLevel.MEMORY_AND_DISK_SER
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
-      
+    
 //    Read in the descriptionid_tokensid.txt file
     //num unique desriptions = 3171830, max desriptionID = 3171829
     //if despTokenSize = 20000, each token appears at least 81 times 
-    val numDesp = 3171829+1
+    val numDesps = 3171829+1
     val despTokenSize = 20000
-    val despToken = new Array[Array[Int]](numDesp)
+    val despToken = new Array[Array[Int]](numDesps)
     val tokensMap = new HashMap[Int, Int]
     val despTokenRDD = sc.textFile(despTokenFile).map(line => {
       val array = line.split("\t")
@@ -71,7 +71,7 @@ object KDDCup2012 {
     //num unique keywords = 1249785, max keywordID = 1249784
     //if keywordTokenSize = 20000, each token appears at least 11 times
     val numKeywords = 1249784 + 1
-    val keywordTokenSize = 20000
+    val keywordTokenFreqTh = 20
     val keywordToken = new Array[Array[Int]](numKeywords)
     tokensMap.clear
     val keywordTokenRDD = sc.textFile(keywordTokenFile).map(line => {
@@ -80,8 +80,9 @@ object KDDCup2012 {
       (array(0).toInt, array(1).split("\\|").map(_.toInt))
     }).persist(storageLevel)
     keywordTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
-      .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(keywordTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .filter(_._2 > keywordTokenFreqTh).map(_._1)
+      .collect.zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+    val keywordTokenSize = tokensMap.size
     keywordTokenRDD.collect.par.foreach(pair => {
       keywordToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -89,9 +90,8 @@ object KDDCup2012 {
     
 //    Read in the queryid_tokensid.txt file
     //num unique queries: 26243606, max queryID = 26243605
-    //if queryTokenSize = 20000, each token appears at least 407 times
     val numQueries = 26243605 + 1
-    val queryTokenSize = 20000
+    val queryTokenFreqTh = 20
     val queryToken = new Array[Array[Int]](numQueries)
     tokensMap.clear
     val queryTokenRDD = sc.textFile(queryTokenFile).map(line => {
@@ -100,8 +100,9 @@ object KDDCup2012 {
       (array(0).toInt, array(1).split("\\|").map(_.toInt))
     }).persist(storageLevel)
     queryTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
-      .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(queryTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .filter(_._2>queryTokenFreqTh).map(_._1)
+      .collect.zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+    val queryTokenSize = tokensMap.size
     queryTokenRDD.collect.par.foreach(pair => {
       queryToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -111,7 +112,7 @@ object KDDCup2012 {
     //num of unique titiles = 4051441, max titleID = 4051440 (246.6 MB)
     //if titleTokenSize = 20000, each token appears at least 49 times
     val numTitles = 4051440 + 1
-    val titleTokenSize = 20000
+    val titleTokenFreqTh = 50
     val titleToken = new Array[Array[Int]](numTitles)
     tokensMap.clear
     val titleTokenRDD = sc.textFile(titleTokenFile).map(line => {
@@ -120,8 +121,9 @@ object KDDCup2012 {
       (array(0).toInt, array(1).split("\\|").map(_.toInt))
     }).persist(storageLevel)
     titleTokenRDD.flatMap(_._2).map((_, 1)).reduceByKey(_+_)
-      .map(pair => (pair._2, pair._1)).sortByKey(false).map(_._2)
-      .take(titleTokenSize).zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+      .filter(_._2 > titleTokenFreqTh).map(_._1)
+      .collect.zipWithIndex.foreach(pair => tokensMap(pair._1) = pair._2)
+    val titleTokenSize = tokensMap.size
     titleTokenRDD.collect.par.foreach(pair => {
       titleToken(pair._1) = pair._2.map(tokensMap.getOrElse(_, -1)).filter(_>=0)
     })
@@ -148,153 +150,171 @@ object KDDCup2012 {
 //  0. Click, 1. Impression, 2. AdID, 3. AdvertiserID, 4. Depth, 5. Position, 
 //  6. QueryID, 7. KeywordID, 8. TitleID, 9. DescriptionID, 10. UserID 
       
-//    Extracting some features from the raw data:
-
 //    Number of appearances of the same user
+//    Average click-through-rate for user
+//    num of unique users = 23669283, max userID = 23907634
+    val userStats = train.map(tokens => (tokens(10), (tokens(0), tokens(1))))
+      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2)).collect.par
     val userFreq = new Array[Int](numUsers)
-    train.map(tokens => (tokens(10), tokens(1))).reduceByKey(_+_)
-      .collect.foreach(pair => userFreq(pair._1) = pair._2)
-    
+    userStats.map(pair => (pair._1, pair._2._1))
+      .foreach(pair => userFreq(pair._1) = pair._2)
+    val userWithClicks = new Array[Boolean](numUsers)
+    userStats.filter(_._2._1>0).map(_._1).foreach(i => userWithClicks(i) = true)
+    val userCtr = new Array[Float](numUsers)
+    userStats.map{
+      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+    }.foreach(pair => userCtr(pair._1) = pair._2)
+      
 //    Number of occurrences of the same query
+//    Average click-through-rate for query
+     //num unique queries: 26243606, max queryID = 26243605
+    val queryStats = train.map(tokens => (tokens(6), (tokens(0), tokens(1))))
+      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2)).collect.par
     val queryFreq = new Array[Int](numQueries)
-    train.map(tokens => (tokens(6), tokens(1))).reduceByKey(_+_)
-      .collect.par.foreach(pair => queryFreq(pair._1) = pair._2)
+    queryStats.map(pair => (pair._1, pair._2._1))
+      .foreach(pair => queryFreq(pair._1) = pair._2)
+    val queryWithClicks = new Array[Boolean](numQueries)
+    queryStats.filter(_._2._1>0).map(_._1).foreach(i => queryWithClicks(i) = true)
+    val queryCtr = new Array[Float](numQueries)
+    queryStats.map{
+      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+    }.foreach(pair => queryCtr(pair._1) = pair._2)
     
 //    Number of occurrences of the same ad
+//    Average click-through-rate for ads' id
     //num of unique Ads 641707, max AdsID 22238277
-    val adFreqPair = train.map(tokens => (tokens(2), tokens(1)))
-      .reduceByKey(_+_).collect
+    val adsStats = train.map(tokens => (tokens(2), (tokens(0), tokens(1))))
+      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2)).collect
     val adIDMap = new HashMap[Int, Int]
-    adFreqPair.map(_._1).zipWithIndex.foreach(pair => adIDMap(pair._1) = pair._2)
+    adsStats.map(_._1).zipWithIndex.foreach(pair => adIDMap(pair._1) = pair._2)
     val numAds = adIDMap.size
     val adFreq = new Array[Int](numAds)
-    adFreqPair.foreach(pair => adFreq(adIDMap(pair._1)) = pair._2)
+    adsStats.map(pair => (pair._1, pair._2._1))
+      .foreach(pair => adFreq(adIDMap(pair._1)) = pair._2)
+    val adWithClicks = new Array[Boolean](numAds)
+    adsStats.filter(_._2._1 > 0).map(_._1).foreach(i => adWithClicks(adIDMap(i)) = true)
+    val adCtr = new Array[Float](numAds)
+    adsStats.map{
+      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+    }.foreach(pair => adCtr(adIDMap(pair._1)) = pair._2)
     
-//    Average click-through-rate for query
-    val queryCtr = new Array[Float](numQueries)
-    train.map(tokens => (tokens(6), (tokens(0), tokens(1))))
-      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => 1.0f*click/impression}
-      .collect.par.foreach(pair => queryCtr(pair._1) = pair._2)
-    
-//    Average click-through-rate for user
-    val userCtr = new Array[Float](numUsers)
-    train.map(tokens => (tokens(10), (tokens(0), tokens(1))))
-      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => 1.0f*click/impression}
-      .collect.par.foreach(pair => userCtr(pair._1) = pair._2)
-      
 //    Average click-through-rate for advertiser
     //num of unique advertisers 14847, max advertiserID 39191
     val numAdvrs = 39191+1
     val advrCtr = new Array[Float](numAdvrs)
     train.map(tokens => (tokens(3), (tokens(0), tokens(1))))
       .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => 1.0f*click/impression}
+      .mapValues{case(click, impression) => (click + 0.05f*75)/(impression+75)}
       .collect.foreach(pair => advrCtr(pair._1) = pair._2)
     
 //    Average click-through-rate for keyword advertised
+    val keywordStats = train.map(tokens => (tokens(7), (tokens(0), tokens(1))))
+      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2)).collect.par
+    val keywordWithClicks = new Array[Boolean](numKeywords)
+    keywordStats.filter(_._2._1>0).map(_._1).foreach(i => keywordWithClicks(i) = true)
     val keywordCtr = new Array[Float](numKeywords)
-    train.map(tokens => (tokens(7), (tokens(0), tokens(1))))
+    keywordStats.map{
+      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+    }.foreach(pair => keywordCtr(pair._1) = pair._2)
+    
+//    Average click-through-rate for titile id
+    val titleCtr = new Array[Float](numTitles)
+    train.map(tokens => (tokens(8), (tokens(0), tokens(1))))
       .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => 1.0f*click/impression}
-      .collect.foreach(pair => keywordCtr(pair._1) = pair._2)
+      .mapValues{case(click, impression) => (click + 0.05f*75)/(impression+75)}
+      .collect.foreach(pair => titleCtr(pair._1) = pair._2)
+      
+//    Average click-through-rate for description id
+    val despCtr = new Array[Float](numDesps)
+    train.map(tokens => (tokens(9), (tokens(0), tokens(1))))
+      .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
+      .mapValues{case(click, impression) => (click + 0.05f*75)/(impression+75)}
+      .collect.foreach(pair => despCtr(pair._1) = pair._2)
       
     val queryTokenBC = sc.broadcast(queryToken)
     val queryFreqBC = sc.broadcast(queryFreq)
     val queryFreqDim = 25
     val queryFreqBinSize = math.max(queryFreq.reduce(math.max(_,_))/queryFreqDim, 1)
     val queryCtrBC = sc.broadcast(queryCtr)
-    val queryCtrBinDim = 150
+    val queryCtrBinDim = 100
     val queryCtrBinSize = queryCtr.reduce(math.max(_,_))/queryCtrBinDim
+    val queryIDBinDim = 10000
+    val queryIDBinSize = numQueries/queryIDBinDim
+    val queryWithClicksBC = sc.broadcast(queryWithClicks)
     val despTokenBC = sc.broadcast(despToken)
+    val despCtrBC = sc.broadcast(despCtr)
+    val despCtrBinDim = 100
+    val despCtrBinSize = despCtr.reduce(math.max(_,_))/despCtrBinDim
     val keywordTokenBC = sc.broadcast(keywordToken)
     val keywordCtrBC = sc.broadcast(keywordCtr)
-    val keywordCtrBinDim = 150
+    val keywordCtrBinDim = 100
     val keywordCtrBinSize = keywordCtr.reduce(math.max(_,_))/keywordCtrBinDim
+    val keywordWithClicksBC = sc.broadcast(keywordWithClicks)
     val titleTokenBC = sc.broadcast(titleToken)
+    val titleCtrBC = sc.broadcast(titleCtr)
+    val titleCtrBinDim = 100
+    val titleCtrBinSize =  titleCtr.reduce(math.max(_,_))/titleCtrBinDim
     val userProfileBC = sc.broadcast(userProfile)
     val userFreqBC = sc.broadcast(userFreq)
     val userFreqDim = 25
     val userFreqBinSize = math.max(userFreq.reduce(math.max(_,_))/userFreqDim, 1)
     val userCtrBC = sc.broadcast(userCtr)
-    val userCtrBinDim = 150
+    val userCtrBinDim = 100
     val userCtrBinSize = userCtr.reduce(math.max(_,_))/userCtrBinDim
+    val userIDBinDim = 10000
+    val userIDBinSize = numUsers/userIDBinDim
+    val userWithClicksBC = sc.broadcast(userWithClicks)
     val adFreqBC = sc.broadcast(adFreq)
     val adFreqDim = 25
     val adFreqBinSize = math.max(adFreq.reduce(math.max(_,_))/adFreqDim, 1)
+    val adCtrBC = sc.broadcast(adCtr)
+    val adCtrBinDim = 100
+    val adCtrBinSize = math.max(adCtr.reduce(math.max(_,_))/adCtrBinDim, 1)
     val adIDMapBC = sc.broadcast(adIDMap)
+    val adIDBinDim = 10000
+    val adIDBinSize = numUsers/adIDBinDim
+    val adWithClicksBC = sc.broadcast(adWithClicks)
     val advrCtrBC = sc.broadcast(advrCtr)
-    val advrCtrBinDim = 150
+    val advrCtrBinDim = 100
     val advrCtrBinSize = advrCtr.reduce(math.max(_,_))/advrCtrBinDim
 //  Form features from raw data:
     train.flatMap(arr => {
       val queryToken = queryTokenBC.value
       val queryFreq = queryFreqBC.value
       val queryCtr = queryCtrBC.value
+      val queryWithClicks = queryWithClicksBC.value
       val despToken = despTokenBC.value
+      val despCtr= despCtrBC.value
       val keywordToken = keywordTokenBC.value
       val keywordCtr = keywordCtrBC.value
+      val keywordWithClicks = keywordWithClicksBC.value
       val titleToken = titleTokenBC.value
+      val titleCtr = titleCtrBC.value
       val userProfile = userProfileBC.value
       val userFreq = userFreqBC.value
       val userCtr = userCtrBC.value
+      val userWithClicks = userWithClicksBC.value
       val adFreq = adFreqBC.value
+      val adCtr = adCtrBC.value
+      val adWithClicks = adWithClicksBC.value
       val adIDMap = adIDMapBC.value
       val advrCtr = advrCtrBC.value
+      
+      var click = arr(0)
+      var impression = arr(1)
       val feature = new ArrayBuilder.ofInt
-      feature.sizeHint(30)
+      feature.sizeHint(25)
       //intercept
       feature += 0
       var offset = 1
-      //Query, D=queryTokenSize
-      feature ++= queryToken(arr(6)).map(_+offset)
-      offset += queryTokenSize
-      //Gender, D=3
-      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
-      offset += 3
-      //Keyword, D=keywordTokenSize
-      feature ++= keywordToken(arr(7)).map(_+offset)
-      offset += keywordTokenSize
-      //Title, D=titleTokenSize
-      feature ++= titleToken(arr(8)).map(_+offset)
-      offset += titleTokenSize
-      //Description, D=despTokenSize
-      feature ++= despToken(arr(9)).map(_+offset)
-      offset += despTokenSize
-      //Advertiser, D=39192
-      feature += arr(3) + offset
-      offset += 39192
-      //AdID, D=641707
-      feature += adIDMap(arr(2)) + offset
-      offset += 641707
-      //age, D=6
-      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
-      offset += 6
-      //UserFreq, D=userFreqDim
-      feature += math.min(userFreq(arr(10))/userFreqBinSize, userFreqDim-1) + offset
-      offset += userFreqDim
-      //Position, D=3
-      feature += math.min(arr(5)-1, 2) + offset
-      offset += 3
-      //Depth, D=3
-      feature += math.min(arr(4)-1, 2) + offset
-      offset += 3
-      //QueryFreq, D=queryFreqDim
-      feature += math.min(queryFreq(arr(6))/queryFreqBinSize, queryFreqDim-1) + offset
-      offset += queryFreqDim
-      //AdFreq, D=adFreqDim
-      feature += math.min(adFreq(adIDMap(arr(2)))/adFreqBinSize, adFreqDim-1) + offset
-      offset += adFreqDim
-      //QueryLength, D=20
-      feature += math.min(queryToken(arr(6)).length, 19) + offset
-      offset += 20
-      //TitleLength, D=30
-      feature += math.min(titleToken(arr(8)).length, 29) + offset
-      offset += 30
-      //DespLength, D=50
-      feature += math.min(despToken(arr(9)).length, 49) + offset
-      offset += 50
+      //AdCtr, D=adCtrBinDim
+      feature += 
+        math.min((adCtr(adIDMap(arr(2)))/adCtrBinSize).toInt, adCtrBinDim-1) + offset
+      offset += adCtrBinDim
+      //AdvrCtr, D=advrCtrBinDim
+      feature += 
+        math.min((advrCtr(arr(3))/advrCtrBinSize).toInt, advrCtrBinDim-1) + offset
+      offset += advrCtrBinDim
       //QueryCtr, D=queryCtrBinDim
       feature += 
         math.min((queryCtr(arr(6))/queryCtrBinSize).toInt, queryCtrBinDim-1) + offset
@@ -303,17 +323,52 @@ object KDDCup2012 {
       feature += 
         math.min((userCtr(arr(10))/userCtrBinSize).toInt, userCtrBinDim-1) + offset
       offset += userCtrBinDim
-      //AdvrCtr, D=advrCtrBinDim
-      feature += 
-        math.min((advrCtr(arr(3))/advrCtrBinSize).toInt, advrCtrBinDim-1) + offset
-      offset += advrCtrBinDim
       //WordCtr, D=keywordCtrBinDim
       feature += math.min((keywordCtr(arr(7))/keywordCtrBinSize).toInt, 
         keywordCtrBinDim-1) + offset
       offset += keywordCtrBinDim
+      //binary User ID, Ad ID, query ID for records with clicks
+      if (userWithClicks(arr(10))) feature += arr(10) + offset
+      offset += numUsers
+      if (adWithClicks(adIDMap(arr(2)))) feature += adIDMap(arr(2)) + offset
+      offset += numAds
+      if (queryWithClicks(arr(6))) feature += arr(6) + offset
+      offset += numQueries
       
-      var click = arr(0)
-      var impression = arr(1)
+      //value-User, value-Query
+      feature += math.min(arr(10)/userIDBinSize, userIDBinDim-1) + offset
+      offset += userIDBinDim
+      feature += math.min(arr(6)/queryIDBinSize, queryIDBinDim-1) + offset
+      offset += queryIDBinDim
+      //Number of tokens in query/title/description/keyword
+      //Query token's length, D=20
+      feature += math.min(queryToken(arr(6)).length, 19) + offset
+      offset += 20
+      //Title token's length, D=30
+      feature += math.min(titleToken(arr(8)).length, 29) + offset
+      offset += 30
+      //Desp token's length, D=50
+      feature += math.min(despToken(arr(9)).length, 49) + offset
+      offset += 50
+      //Keyword token's length, D=10
+      feature += math.min(keywordToken(arr(7)).length, 9) + offset
+      offset += 10
+      //binary-Gender, binary-Age, binary-PositionDepth, binary-QueryTokens
+      //Gender, D=3
+      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
+      offset += 3
+      //Age, D=6
+      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
+      offset += 6
+      //binary Position-Depth
+      feature += 6*arr(5)/arr(4)
+      offset += 6
+      //binary query tokens, D=queryTokenSize
+      if (queryWithClicks(arr(6))) feature ++= queryToken(arr(6)).map(_+offset)
+      offset += queryTokenSize
+      if (keywordWithClicks(arr(7))) feature ++= keywordToken(arr(7)).map(_+offset)
+      offset += keywordTokenSize
+      
       val records = new Array[Array[Int]](impression)
       if (click >= 1) feature += 1
       else feature += -1
@@ -353,72 +408,43 @@ object KDDCup2012 {
       val queryToken = queryTokenBC.value
       val queryFreq = queryFreqBC.value
       val queryCtr = queryCtrBC.value
+      val queryWithClicks = queryWithClicksBC.value
       val despToken = despTokenBC.value
+      val despCtr= despCtrBC.value
       val keywordToken = keywordTokenBC.value
       val keywordCtr = keywordCtrBC.value
+      val keywordWithClicks = keywordWithClicksBC.value
       val titleToken = titleTokenBC.value
+      val titleCtr = titleCtrBC.value
       val userProfile = userProfileBC.value
       val userFreq = userFreqBC.value
       val userCtr = userCtrBC.value
+      val userWithClicks = userWithClicksBC.value
       val adFreq = adFreqBC.value
+      val adCtr = adCtrBC.value
+      val adWithClicks = adWithClicksBC.value
       val adIDMap = adIDMapBC.value
       val advrCtr = advrCtrBC.value
+      
+      var click = arr(0)
+      var impression = arr(1)
       val feature = new ArrayBuilder.ofInt
-      feature.sizeHint(30)
+      feature.sizeHint(25)
       //intercept
       feature += 0
       var offset = 1
-      //Query's token, D=queryTokenSize
-      feature ++= queryToken(arr(6)).map(_+offset)
-      offset += queryTokenSize
-      //User's gender, D=3
-      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
-      offset += 3
-      //Keyword's token, D=keywordTokenSize
-      feature ++= keywordToken(arr(7)).map(_+offset)
-      offset += keywordTokenSize
-      //Title's token, D=titleTokenSize
-      feature ++= titleToken(arr(8)).map(_+offset)
-      offset += titleTokenSize
-      //Description's token, D=despTokenSize
-      feature ++= despToken(arr(9)).map(_+offset)
-      offset += despTokenSize
-      //Advertiser's ID, D=39192
-      feature += arr(3) + offset
-      offset += 39192
-      //Ads' ID, D=641707
-      if (adIDMap.contains(arr(2))) feature += adIDMap(arr(2)) + offset
-      offset += 641707
-      //User's age, D=6
-      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
-      offset += 6
-      //UserFreq, D=userFreqDim
-      feature += math.min(userFreq(arr(10))/userFreqBinSize, userFreqDim-1) + offset
-      offset += userFreqDim
-      //Ads' position, D=3
-      feature += math.min(arr(5)-1, 2) + offset
-      offset += 3
-      //Ads' depth, D=3
-      feature += math.min(arr(4)-1, 2) + offset
-      offset += 3
-      //QueryFreq, D=queryFreqDim
-      feature += math.min(queryFreq(arr(6))/queryFreqBinSize, queryFreqDim-1) + offset
-      offset += queryFreqDim
-      //AdFreq, D=adFreqDim
+      //AdCtr, D=adCtrBinDim
       if (adIDMap.contains(arr(2))) {
         feature += 
-          math.min(adFreq(adIDMap(arr(2)))/adFreqBinSize, adFreqDim-1) + offset
+          math.min((adCtr(adIDMap(arr(2)))/adCtrBinSize).toInt, adCtrBinDim-1) + offset
       }
-      offset += adFreqDim
-      //Query token's length, D=20
-      feature += math.min(queryToken(arr(6)).length, 19) + offset
-      offset += 20
-      //Title token's length, D=30
-      feature += math.min(titleToken(arr(8)).length, 29) + offset
-      offset += 30
-      //Description's length, D=50
-      feature += math.min(despToken(arr(9)).length, 49) + offset
-      offset += 50
+      offset += adCtrBinDim
+      //AdvrCtr, D=advrCtrBinDim
+      if (arr(3) < advrCtr.length) {
+        feature += 
+          math.min((advrCtr(arr(3))/advrCtrBinSize).toInt, advrCtrBinDim-1) + offset
+      }
+      offset += advrCtrBinDim
       //QueryCtr, D=queryCtrBinDim
       feature += 
         math.min((queryCtr(arr(6))/queryCtrBinSize).toInt, queryCtrBinDim-1) + offset
@@ -427,19 +453,53 @@ object KDDCup2012 {
       feature += 
         math.min((userCtr(arr(10))/userCtrBinSize).toInt, userCtrBinDim-1) + offset
       offset += userCtrBinDim
-      //AdvrCtr, D=advrCtrBinDim
-      if (arr(3) < advrCtr.length) {
-        feature += 
-          math.min((advrCtr(arr(3))/advrCtrBinSize).toInt, advrCtrBinDim-1) + offset
-      }
-      offset += advrCtrBinDim
       //WordCtr, D=keywordCtrBinDim
       feature += math.min((keywordCtr(arr(7))/keywordCtrBinSize).toInt, 
         keywordCtrBinDim-1) + offset
       offset += keywordCtrBinDim
+      //binary User ID, Ad ID, query ID for records with clicks
+      if (userWithClicks(arr(10))) feature += arr(10) + offset
+      offset += numUsers
+      if (adIDMap.contains(arr(2)) && adWithClicks(adIDMap(arr(2)))) {
+        feature += adIDMap(arr(2)) + offset
+      }
+      offset += numAds
+      if (queryWithClicks(arr(6))) feature += arr(6) + offset
+      offset += numQueries
       
-      var click = arr(0)
-      var impression = arr(1)
+      //value-User, value-Query
+      feature += math.min(arr(10)/userIDBinSize, userIDBinDim-1) + offset
+      offset += userIDBinDim
+      feature += math.min(arr(6)/queryIDBinSize, queryIDBinDim-1) + offset
+      offset += queryIDBinDim
+      //Number of tokens in query/title/description/keyword
+      //Query token's length, D=20
+      feature += math.min(queryToken(arr(6)).length, 19) + offset
+      offset += 20
+      //Title token's length, D=30
+      feature += math.min(titleToken(arr(8)).length, 29) + offset
+      offset += 30
+      //Desp token's length, D=50
+      feature += math.min(despToken(arr(9)).length, 49) + offset
+      offset += 50
+      //Keyword token's length, D=10
+      feature += math.min(keywordToken(arr(7)).length, 9) + offset
+      offset += 10
+      //binary-Gender, binary-Age, binary-PositionDepth, binary-QueryTokens
+      //Gender, D=3
+      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(0) + offset
+      offset += 3
+      //Age, D=6
+      if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
+      offset += 6
+      //binary Position-Depth
+      feature += 6*arr(5)/arr(4)
+      offset += 6
+      //binary query tokens, D=queryTokenSize
+      if (queryWithClicks(arr(6))) feature ++= queryToken(arr(6)).map(_+offset)
+      offset += queryTokenSize
+      if (keywordWithClicks(arr(7))) feature ++= keywordToken(arr(7)).map(_+offset)
+      offset += keywordTokenSize
       val records = new Array[Array[Int]](impression)
       if (click >= 1) feature += 1
       else feature += -1

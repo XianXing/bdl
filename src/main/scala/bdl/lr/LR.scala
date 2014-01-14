@@ -173,8 +173,9 @@ object LR extends Settings {
     
     System.setProperty("spark.local.dir", tmpDir)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-    System.setProperty("spark.storage.memoryFraction", "0.2")
+    System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
+    System.setProperty("spark.speculation", "true")
 //    System.setProperty("spark.serializer", 
 //        "org.apache.spark.serializer.KryoSerializer")
 //    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
@@ -246,8 +247,11 @@ object LR extends Settings {
        })
       }
     val trainingData = rawTrainingData.groupByKey(dataPartitioner)
-       .mapValues(seq => (seq.map(_._1).toArray, CSRMatrix(seq.map(_._2).toArray)))
+       .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
        .persist(storageLevel)
+    val splitsStats = trainingData.mapValues{
+      case(responses, features) => (responses.length, features.rowMap.length)
+    }.collect
     
     val testingData = 
       if (isSeq) {
@@ -259,20 +263,18 @@ object LR extends Settings {
       }
       else {
         sc.textFile(testingDataDir).map(line => {
-        if (featureThre > 0) parseLine(line, featureMapBC.value, isBinary)
-        else parseLine(line, isBinary)
+          if (featureThre > 0) parseLine(line, featureMapBC.value, isBinary)
+          else parseLine(line, isBinary)
        })
       }
     testingData.persist(storageLevel)
-    val splitsStats = trainingData.mapValues{
-      case(responses, features) => (responses.length, features.rowMap.length)
-    }.collect
     
     val numFeatures = 
       if (featureThre > 0) featureSet.size + 1 //+1 because of the intercept
       else trainingData.map(_._2._2.rowMap.last).reduce(math.max(_,_)) + 1
-    val isSparse = splitsStats.forall(pair => pair._2._2 < 0.5*numFeatures)
+    val isSparse = splitsStats.forall(pair => pair._2._2 < 0.3*numFeatures)
     val numTrain = splitsStats.map(_._2._1).reduce(_+_)
+    val nnz = trainingData.map(_._2._2.col_idx.length).sum
     val testingDataPos = testingData.filter(_._1).persist(storageLevel)
     val testingDataNeg = testingData.filter(!_._1).persist(storageLevel)
     val numTestPos = testingDataPos.count.toInt
@@ -297,12 +299,14 @@ object LR extends Settings {
     val localUpdateBC = sc.broadcast(localUpdate)
     val numLocalUpdate = localUpdate.count(p => p)
     val percentage = 100.0*numLocalUpdate/numFeatures
-    println("number of: features " + numFeatures + "; training data " + numTrain + 
-      "; testing data " + numTest + " (" + numTestPos + "," + numTestNeg + ")")
+    println("#features: " + numFeatures + "; #training data " + numTrain + 
+      "; nnz:" + nnz +"; #testing data " + numTest + 
+      " (" + numTestPos + "," + numTestNeg + ")")
     println("numLocalUpdate: " + numLocalUpdate + ": " + percentage + "%")
     bwLog.write("numLocalUpdate: " + numLocalUpdate + ": " + percentage + "%\n")
-    bwLog.write("number of: features " + numFeatures + "; training data " + numTrain 
-      + "; testing data " + numTest + " (" + numTestPos + "," + numTestNeg + ")\n")
+    bwLog.write("#features: " + numFeatures + "; #training data " + numTrain + 
+      "; nnz:" + nnz +"; #testing data " + numTest + 
+      " (" + numTestPos + "," + numTestNeg + ")\n")
     splitsStats.foreach(pair => println("partition " + pair._1 + 
       " has " + pair._2._1 + " samples and " + pair._2._2 + " features"))
     println("sparse update: " + isSparse)
