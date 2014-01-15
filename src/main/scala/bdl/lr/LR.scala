@@ -175,7 +175,7 @@ object LR extends Settings {
     System.setProperty("spark.default.parallelism", numReducers.toString)
     System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
-    System.setProperty("spark.speculation", "true")
+//    System.setProperty("spark.speculation", "true")
 //    System.setProperty("spark.serializer", 
 //        "org.apache.spark.serializer.KryoSerializer")
 //    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
@@ -216,9 +216,11 @@ object LR extends Settings {
     // to filter out infrequent features
     val featureSet = 
       if (featureThre > 0) {
-        sc.textFile(trainingDataDir).flatMap(count(_, featureThre)).reduceByKey(_+_)
-        .filter(_._2 >= featureThre).map(_._1).collect.sorted
-      }
+        if (isSeq) {
+          sc.objectFile[Array[Int]](trainingDataDir).flatMap(countArr(_, featureThre/2))
+        }
+        else sc.textFile(trainingDataDir).flatMap(countLine(_, featureThre/2))
+      }.reduceByKey(_+_).filter(_._2 >= featureThre).map(_._1).collect.sorted
       else null
     
     val featureMapBC = 
@@ -228,14 +230,11 @@ object LR extends Settings {
     val rawTrainingData = 
       if (isSeq) {
         if (isBinary) {
-          sc.objectFile[Array[Int]](trainingDataDir).map(
-            arr => {
-              val bid = (math.random*numSlices).toInt
-              val response = arr.last == 1
-              val feature = SparseVector(arr.dropRight(1))
-              (bid, (response, feature))
-            }
-          )
+          sc.objectFile[Array[Int]](trainingDataDir).map(arr => {
+            val bid = (math.random*numSlices).toInt
+            if (featureThre > 0) (bid, parseArr(arr, featureMapBC.value))
+            else (bid, parseArr(arr))
+          })
         }
         else null
       }
@@ -256,8 +255,10 @@ object LR extends Settings {
     val testingData = 
       if (isSeq) {
         if (isBinary) {
-          sc.objectFile[Array[Int]](testingDataDir)
-            .map(arr => (arr.last == 1, SparseVector(arr.dropRight(1))))
+          sc.objectFile[Array[Int]](testingDataDir).map(arr => {
+            if (featureThre > 0) parseArr(arr, featureMapBC.value)
+            else parseArr(arr)
+          })
         }
         else null
       }
@@ -268,19 +269,19 @@ object LR extends Settings {
        })
       }
     testingData.persist(storageLevel)
-    
     val numFeatures = 
       if (featureThre > 0) featureSet.size + 1 //+1 because of the intercept
       else trainingData.map(_._2._2.rowMap.last).reduce(math.max(_,_)) + 1
     val isSparse = splitsStats.forall(pair => pair._2._2 < 0.3*numFeatures)
     val numTrain = splitsStats.map(_._2._1).reduce(_+_)
-    val nnz = trainingData.map(_._2._2.col_idx.length).sum
-    val testingDataPos = testingData.filter(_._1).persist(storageLevel)
-    val testingDataNeg = testingData.filter(!_._1).persist(storageLevel)
+    val nnzTrain = trainingData.map(_._2._2.col_idx.length.toLong).reduce(_+_)
+    val nnzTest = testingData.map(_._2.size).reduce(_+_)
+    val testingDataPos = testingData.filter(_._1).map(_._2).persist(storageLevel)
+    val testingDataNeg = testingData.filter(!_._1).map(_._2).persist(storageLevel)
     val numTestPos = testingDataPos.count.toInt
     val numTestNeg = testingDataNeg.count.toInt
     val numTest = numTestPos + numTestNeg
-    testingData.unpersist()
+//    testingData.unpersist()
     val featureCount =
       if (!exact) {
         if (isSparse) {
@@ -300,13 +301,13 @@ object LR extends Settings {
     val numLocalUpdate = localUpdate.count(p => p)
     val percentage = 100.0*numLocalUpdate/numFeatures
     println("#features: " + numFeatures + "; #training data " + numTrain + 
-      "; nnz:" + nnz +"; #testing data " + numTest + 
-      " (" + numTestPos + "," + numTestNeg + ")")
+      "; train nnz: " + nnzTrain +"; #testing data " + numTest + 
+      " (+" + numTestPos + ",-" + numTestNeg + "), test nnz: " + nnzTest)
     println("numLocalUpdate: " + numLocalUpdate + ": " + percentage + "%")
     bwLog.write("numLocalUpdate: " + numLocalUpdate + ": " + percentage + "%\n")
     bwLog.write("#features: " + numFeatures + "; #training data " + numTrain + 
-      "; nnz:" + nnz +"; #testing data " + numTest + 
-      " (" + numTestPos + "," + numTestNeg + ")\n")
+      "; nnz:" + nnzTrain +"; #testing data " + numTest + 
+      " (" + numTestPos + "," + numTestNeg + "), test nnz: " + nnzTest + "\n")
     splitsStats.foreach(pair => println("partition " + pair._1 + 
       " has " + pair._2._1 + " samples and " + pair._2._2 + " features"))
     println("sparse update: " + isSparse)
@@ -336,10 +337,7 @@ object LR extends Settings {
         }
         else {
           val model = Model(features.numRows, gamma_init, admm)
-          if (cg || lbfgs) {
-            model.runCGQN(responses, features, maxInnerIter, th)
-          }
-          else model.runCD(responses, features, maxInnerIter, th)
+          model.runCGQN(responses, features, maxInnerIter, th)
         }
       }
     }
@@ -445,12 +443,20 @@ object LR extends Settings {
       globalParaBC = sc.broadcast(globalPara)
       if ((iter+1) % interval == 0) {
         //calculate the AUC
-        val tp = testingDataPos.map(data => 
-          getBinPred(data._2, globalParaBC.value, 50)).reduce(_+=_).elements
-        val fp = testingDataNeg.map(data => 
-          getBinPred(data._2, globalParaBC.value, 50)).reduce(_+=_).elements
+        val tpr = testingDataPos.map(feature => 
+          getBinPred(feature, globalParaBC.value, 500)).reduce(_+=_)
+          .toArray.map(_/numTestPos)
+        val fpr = testingDataNeg.map(feature => 
+          getBinPred(feature, globalParaBC.value, 500)).reduce(_+=_)
+          .toArray.map(_/numTestNeg)
         old_auc = auc
-        auc = getAUC(tp, fp, numTestPos, numTestNeg)
+        auc = getAUC(tpr, fpr, numTestPos, numTestNeg)
+        //calculate the log likelihood
+        val llhPos = testingDataPos.map(feature => 
+          getLLH(1, feature, globalParaBC.value)).sum
+        val llhNeg = testingDataNeg.map(feature => 
+          getLLH(-1, feature, globalParaBC.value)).sum
+        val llh = llhPos + llhNeg
         val (innerIterSum, obj_gr) = localInfo.reduce((pair1, pair2) => 
           (pair1._1+pair2._1, pair1._2+pair2._2))
         val obj = obj_gr - globalPara.map(p => p*p).sum*lambda/2
@@ -471,12 +477,14 @@ object LR extends Settings {
         val time = (System.currentTimeMillis() - iterTime)*0.001
         println("Average number of inner iterations: " + innerIterSum/numSlices)
         println("Iter: " + iter + " time elapsed: " + time + " AUC: " + auc +
-          " obj: " + obj)
+          " llh: " + llh + " obj: " + obj)
+//        println("TPR: " + tpr.mkString(" "))
+//        println("FPR: " + fpr.mkString(" "))
         println("ave l1 norm: " + l1norm)
         bwLog.write("Average number of inner iterations: " + 
             innerIterSum/numSlices + "\n")
         bwLog.write("Iter: " + iter + " time elapsed: " + time + " AUC: " + auc +
-          " obj: " + obj + '\n')
+          " llh: " + llh + " obj: " + obj + '\n')
         bwLog.write("ave l1 norm: " + l1norm + '\n')
         iterTime = System.currentTimeMillis()
       }
@@ -536,6 +544,13 @@ object LR extends Settings {
       println("global: " + str)
       bwLog.write("global: " + str + '\n')
     }
+    testingData.map{
+      case(response, feature) => {
+        val pred = sigmoid(feature.dot(globalParaBC.value))
+        val y = if (response) 1 else -1
+        y + "\t" + pred + "\t" + feature.zip(globalParaBC.value).mkString(" ")
+      }
+    }.saveAsTextFile(outputDir + "pred")
     bwLog.write("Total time elapsed " 
         + (System.currentTimeMillis()-currentTime)*0.001 + "(s)\n")
     bwLog.close()

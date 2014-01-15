@@ -6,11 +6,7 @@ object Functions {
   
   def copy(from: Array[Float], to: Array[Float]) = {
     assert(from.length == to.length)
-    var i = 0
-    while (i < from.length) {
-      to(i) = from(i)
-      i += 1
-    }
+    System.arraycopy(from, 0, to, 0, from.length)
   }
   
   def exp(value: Float) = {
@@ -119,17 +115,15 @@ object Functions {
     hessian
   }
   
-  def getAUC(tp : Array[Float], fp : Array[Float], numPos : Int, numNeg: Int) : Float = {
-    assert(tp.length == fp.length)
+  def getAUC(tpr : Array[Float], fpr : Array[Float], numPos : Int, numNeg: Int) : Float = {
+    assert(tpr.length == fpr.length)
     var tpr_prev = 0.0f
     var fpr_prev = 0.0f
     var auc = 0.0f
-    for (i <- tp.length-1 to 0 by -1) {
-      val tpr = tp(i)/numPos
-      val fpr = fp(i)/numNeg
-      auc += 0.5f*(tpr+tpr_prev)*(fpr-fpr_prev)
-      tpr_prev = tpr
-      fpr_prev = fpr
+    for (i <- tpr.length-1 to 0 by -1) {
+      auc += 0.5f*(tpr(i)+tpr_prev)*(fpr(i)-fpr_prev)
+      tpr_prev = tpr(i)
+      fpr_prev = fpr(i)
     }
     auc
   }
@@ -150,6 +144,12 @@ object Functions {
       if (data._1) 1
       else -1
     val yxw = response*features.dot(w)
+    if (yxw > -10) -math.log(1 + math.exp(-yxw))
+    else yxw
+  }
+  
+  def getLLH(response: Int, feature: SparseVector, w : Array[Float]) : Double = {
+    val yxw = response*feature.dot(w)
     if (yxw > -10) -math.log(1 + math.exp(-yxw))
     else yxw
   }

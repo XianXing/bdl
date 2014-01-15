@@ -23,7 +23,7 @@ object LR {
     else if (string.startsWith("0")) false
     else true
   }
-    
+  
   def parseLine(line : String, featureMap : Map[Int, Int], binary : Boolean)
     : (Boolean, SparseVector) = {
     
@@ -70,7 +70,7 @@ object LR {
     else (response, SparseVector(key, value, false))
   }
   
-  def count(line : String, weight: Int = 1) = {
+  def countLine(line : String, weight: Int = 1) = {
     val parts = line.split(" ")
     val response = parseResponse(parts(0))
     val length = parts.length
@@ -78,21 +78,42 @@ object LR {
     var i = 1
     while (i < length) {
       val token = parts(i).split(":")
-      if (response) results(i-1) = (token(0).toInt, 1)
-      else results(i-1) = (token(0).toInt, weight)
+      if (response) results(i-1) = (token(0).toInt, weight)
+      else results(i-1) = (token(0).toInt, 1)
       i+=1
     }
     results
   }
   
-  def main(args: Array[String]) {
-    
-    val master = "local[2]"
-    val jar = Seq("sparkproject.jar")
-    val jobName = "preprocess_TF"
-//    val inputDir = "../datasets/MovieLens/ml-1m/ra.train"
-    val inputDir = "../datasets/MovieLens/ml-1m/ra.test"
-    val outputDir = "input/ml-1m/mf_test"
-    val sc = new SparkContext(master, jobName, System.getenv("SPARK_HOME"), jar)
+  def countArr(arr : Array[Int], weight: Int = 1) = {
+    val length = arr.length
+    val results = new Array[(Int, Int)](length - 1)
+    val response = arr.last == 1
+    var i = 0
+    while (i < length - 1) {
+      if (response) results(i) = (arr(i), weight)
+      else results(i) = (arr(i), 1)
+      i+=1
+    }
+    results
+  }
+  
+  def parseArr(arr: Array[Int], featureMap : Map[Int, Int]) 
+    : (Boolean, SparseVector) = {
+    val response = arr.last == 1
+    val length = arr.length
+    val key = new ArrayBuilder.ofInt
+    key.sizeHint(length - 1)
+    var i = 0
+    while (i < length - 1) {
+      if (featureMap.contains(arr(i))) key += featureMap(arr(i))
+      i+=1
+    }
+    (response, SparseVector(key.result))
+  }
+  
+  def parseArr(arr: Array[Int]) : (Boolean, SparseVector) = {
+    val response = arr.last == 1
+    (response, SparseVector(arr.dropRight(1)))
   }
 }

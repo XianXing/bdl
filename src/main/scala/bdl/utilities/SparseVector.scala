@@ -257,12 +257,33 @@ class SparseVector(val indices : Array[Int], val values : Array[Float])
   def dot(that: Vector) : Float = {
     var res = 0.0f
     var i = 0
-    val values = this.getValues
     while (i < size) {
-      res += values(i)*that(indices(i))
+      if (isBinary) res += that(indices(i))
+      else res += values(i)*that(indices(i))
       i += 1
     }
     res
+  }
+  
+  def dot(that: Array[Float]) : Float = {
+    var res = 0.0f
+    var i = 0
+    while (i < size) {
+      if (isBinary) res += that(indices(i))
+      else res += values(i)*that(indices(i))
+      i += 1
+    }
+    res
+  }
+  
+  def zip(that: Array[Float]) : Array[(Int, Float)] = {
+    val result = new Array[(Int, Float)](size)
+    var i = 0
+    while (i < size) {
+      result(i) = (indices(i), that(indices(i)))
+      i += 1
+    }
+    result
   }
   
   def squaredL2Norm = {

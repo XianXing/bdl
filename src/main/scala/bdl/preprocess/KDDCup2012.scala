@@ -21,6 +21,9 @@ object KDDCup2012 {
   val testFeatureFile = dataDir + "test_features"
   val testLabelFile = dataDir + "test_labels"
   
+  val alpha = 0.05f
+  val beta = 75
+  
   val outputDir = "output/KDDCup2012/"
   val tmpDir = "/tmp/spark"
   val numCores = 16
@@ -162,7 +165,7 @@ object KDDCup2012 {
     userStats.filter(_._2._1>0).map(_._1).foreach(i => userWithClicks(i) = true)
     val userCtr = new Array[Float](numUsers)
     userStats.map{
-      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+      case(id, (click, impression)) => (id, (click+alpha*beta)/(impression + beta))
     }.foreach(pair => userCtr(pair._1) = pair._2)
       
 //    Number of occurrences of the same query
@@ -177,7 +180,7 @@ object KDDCup2012 {
     queryStats.filter(_._2._1>0).map(_._1).foreach(i => queryWithClicks(i) = true)
     val queryCtr = new Array[Float](numQueries)
     queryStats.map{
-      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+      case(id, (click, impression)) => (id, (click+alpha*beta)/(impression + beta))
     }.foreach(pair => queryCtr(pair._1) = pair._2)
     
 //    Number of occurrences of the same ad
@@ -195,7 +198,7 @@ object KDDCup2012 {
     adsStats.filter(_._2._1 > 0).map(_._1).foreach(i => adWithClicks(adIDMap(i)) = true)
     val adCtr = new Array[Float](numAds)
     adsStats.map{
-      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+      case(id, (click, impression)) => (id, (click+alpha*beta)/(impression + beta))
     }.foreach(pair => adCtr(adIDMap(pair._1)) = pair._2)
     
 //    Average click-through-rate for advertiser
@@ -204,7 +207,7 @@ object KDDCup2012 {
     val advrCtr = new Array[Float](numAdvrs)
     train.map(tokens => (tokens(3), (tokens(0), tokens(1))))
       .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => (click + 0.05f*75)/(impression+75)}
+      .mapValues{case(click, impression) => (click+alpha*beta)/(impression + beta)}
       .collect.foreach(pair => advrCtr(pair._1) = pair._2)
     
 //    Average click-through-rate for keyword advertised
@@ -214,21 +217,21 @@ object KDDCup2012 {
     keywordStats.filter(_._2._1>0).map(_._1).foreach(i => keywordWithClicks(i) = true)
     val keywordCtr = new Array[Float](numKeywords)
     keywordStats.map{
-      case(id, (click, impression)) => (id, (click + 0.05f*75)/(impression+75))
+      case(id, (click, impression)) => (id, (click+alpha*beta)/(impression + beta))
     }.foreach(pair => keywordCtr(pair._1) = pair._2)
     
 //    Average click-through-rate for titile id
     val titleCtr = new Array[Float](numTitles)
     train.map(tokens => (tokens(8), (tokens(0), tokens(1))))
       .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => (click + 0.05f*75)/(impression+75)}
+      .mapValues{case(click, impression) => (click+alpha*beta)/(impression + beta)}
       .collect.foreach(pair => titleCtr(pair._1) = pair._2)
       
 //    Average click-through-rate for description id
     val despCtr = new Array[Float](numDesps)
     train.map(tokens => (tokens(9), (tokens(0), tokens(1))))
       .reduceByKey((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-      .mapValues{case(click, impression) => (click + 0.05f*75)/(impression+75)}
+      .mapValues{case(click, impression) => (click+alpha*beta)/(impression + beta)}
       .collect.foreach(pair => despCtr(pair._1) = pair._2)
       
     val queryTokenBC = sc.broadcast(queryToken)
@@ -361,7 +364,7 @@ object KDDCup2012 {
       if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
       offset += 6
       //binary Position-Depth
-      feature += 6*arr(5)/arr(4)
+      feature += 6*arr(5)/arr(4) + offset
       offset += 6
       //binary query tokens, D=queryTokenSize
       if (queryWithClicks(arr(6))) feature ++= queryToken(arr(6)).map(_+offset)
@@ -387,9 +390,9 @@ object KDDCup2012 {
         count += 1
       }
       records
-    }).saveAsObjectFile(outputDir + "train_obj")
+    }).saveAsObjectFile(outputDir + "train_seq")
 //    .map(arr => arr(arr.length-1) + "\t" + arr.take(arr.length-1).mkString(" "))
-//    .saveAsTextFile(outputDir)
+//    .saveAsTextFile(outputDir + "train_text")
     
     val test_feature = sc.textFile(testFeatureFile).map(_.split("\t"))
       .map(arr => (arr(0).trim.toInt, arr.drop(2).map(_.toInt)))
@@ -493,7 +496,7 @@ object KDDCup2012 {
       if (userProfile(arr(10)) != null) feature += userProfile(arr(10))(1)-1 + offset
       offset += 6
       //binary Position-Depth
-      feature += 6*arr(5)/arr(4)
+      feature += 6*arr(5)/arr(4) + offset
       offset += 6
       //binary query tokens, D=queryTokenSize
       if (queryWithClicks(arr(6))) feature ++= queryToken(arr(6)).map(_+offset)
@@ -518,9 +521,9 @@ object KDDCup2012 {
         count += 1
       }
       records
-    }).saveAsObjectFile(outputDir + "test_obj")
+    }).saveAsObjectFile(outputDir + "test_seq")
 //    .map(arr => arr(arr.length-1) + "\t" + arr.take(arr.length-1).mkString(" "))
-//    .saveAsTextFile(outputDir + "test")
+//    .saveAsTextFile(outputDir + "test_text")
     System.exit(0)
   }
 }
