@@ -220,7 +220,8 @@ object LR extends Settings {
           sc.objectFile[Array[Int]](trainingDataDir).flatMap(countArr(_, featureThre/2))
         }
         else sc.textFile(trainingDataDir).flatMap(countLine(_, featureThre/2))
-      }.reduceByKey(_+_).filter(_._2 >= featureThre).map(_._1).collect.sorted
+      }.reduceByKey(featurePartitioner, _+_)
+      .filter(_._2 >= featureThre).map(_._1).collect.sorted
       else null
     
     val featureMapBC = 

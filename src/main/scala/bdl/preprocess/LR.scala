@@ -29,25 +29,23 @@ object LR {
     
     val parts = line.split(" ")
     val response = parseResponse(parts(0))
-    val key = new ArrayBuilder.ofInt
-    key.sizeHint(parts.length)
-    val value = new ArrayBuilder.ofFloat
-    if (!binary) value.sizeHint(parts.length)
+    var key : List[Int] = Nil
+    var value : List[Float] = Nil
     // adding the offset
-    key += 0
-    if (!binary) value += 1
+    key = 0 :: key
+    if (!binary) value = 1 :: value
     var i = 1
     while (i < parts.length) {
       val token = parts(i).split(":")
       val featureID = token(0).toInt
       if (featureMap.contains(featureID)) {
-        key += (featureMap(featureID)+1)
-        if (!binary && token.length>1) value += token(1).toFloat
+        key = (featureMap(featureID)+1) :: key
+        if (!binary && token.length>1) value = token(1).toFloat :: value
       }
       i+=1
     }
-    if (binary) (response, SparseVector(key.result, false))
-    else (response, SparseVector(key.result, value.result, false))
+    if (binary) (response, SparseVector(key.toArray, false))
+    else (response, SparseVector(key.toArray, value.toArray, false))
   }
   
   def parseLine(line : String, binary : Boolean) : (Boolean, SparseVector) = {
@@ -102,14 +100,13 @@ object LR {
     : (Boolean, SparseVector) = {
     val response = arr.last == 1
     val length = arr.length
-    val key = new ArrayBuilder.ofInt
-    key.sizeHint(length - 1)
+    var key : List[Int] = Nil
     var i = 0
     while (i < length - 1) {
-      if (featureMap.contains(arr(i))) key += featureMap(arr(i))
+      if (featureMap.contains(arr(i))) key = featureMap(arr(i)) :: key
       i+=1
     }
-    (response, SparseVector(key.result))
+    (response, SparseVector(key.toArray))
   }
   
   def parseArr(arr: Array[Int]) : (Boolean, SparseVector) = {
