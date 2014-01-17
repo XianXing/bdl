@@ -6,6 +6,7 @@ import preprocess.MF._
 import java.io._
 import scala.math._
 import scala.util.Sorting._
+import scala.collection.mutable.HashSet
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkContext, HashPartitioner, storage}
 import org.apache.spark.SparkContext._
@@ -18,10 +19,10 @@ import org.apache.hadoop.io.NullWritable
 object PMF extends Settings {
   
   val synthetic = false
-  val TRAINING_PATH = if (synthetic) 
+  val trainingPath = if (synthetic) 
     "output/train_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
     else "input/ml-1m/mf_train"
-  val TESTING_PATH = if (synthetic) 
+  val testingPath = if (synthetic) 
     "output/test_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
     else "input/ml-1m/mf_test"
   val outputDir = "output/"
@@ -55,8 +56,8 @@ object PMF extends Settings {
   val iso = false
   val updateGammaR = vb
   val updateGammaC = vb
-  val MODE = "local[" + numCores + "]"
-  val JARS = Seq("sparkproject.jar")
+  val mode = "local[" + numCores + "]"
+  val jars = Seq("sparkproject.jar")
   val tmpDir = "tmp"
   val multicore = numCores > numSlices
   val interval = 2
@@ -208,10 +209,10 @@ object PMF extends Settings {
     assert(line.hasOption(TESTING_OPTION), "testing data path not specified")
     assert(line.hasOption(JAR_OPTION), "jar file path not specified")
     
-    val MODE = line.getOptionValue(RUNNING_MODE_OPTION)
-    val TRAINING_PATH = line.getOptionValue(TRAINING_OPTION)
-    val TESTING_PATH = line.getOptionValue(TESTING_OPTION)
-    val JARS = Seq(line.getOptionValue(JAR_OPTION))
+    val mode = line.getOptionValue(RUNNING_MODE_OPTION)
+    val trainingPath = line.getOptionValue(TRAINING_OPTION)
+    val testingPath = line.getOptionValue(TESTING_OPTION)
+    val jars = Seq(line.getOptionValue(JAR_OPTION))
     val outputDir = 
       if (line.hasOption(OUTPUT_OPTION))
         if (!line.getOptionValue(OUTPUT_OPTION).endsWith(PATH_SEPERATOR))
@@ -309,74 +310,77 @@ object PMF extends Settings {
       else 1
     val synthetic = line.hasOption(SYNTHETIC_DATA_OPTION)
     
-    var JOB_NAME = "DIST_MF"
-    if (vb) JOB_NAME += "_VB" else JOB_NAME += "_MAP"
-    if (admm) JOB_NAME += "_ADMM" 
-    if (multicore) JOB_NAME += "_multicore_"
-    if (l1) JOB_NAME += "_l1"
-    if (max_norm) JOB_NAME += "_max_norm"
-    if (iso) JOB_NAME += "_iso"
-    if (synthetic) JOB_NAME += "_M_" + numRows + "_N_" + numCols
-    JOB_NAME +=  "_oi_" + maxOuterIter + "_ii_" + maxInnerIter + "_K_" + numFactors +
+    var jobName = "DIST_MF"
+    if (vb) jobName += "_VB" else jobName += "_MAP"
+    if (admm) jobName += "_ADMM" 
+    if (multicore) jobName += "_multicore"
+    if (l1) jobName += "_l1"
+    if (max_norm) jobName += "_max_norm"
+    if (iso) jobName += "_iso"
+    if (synthetic) jobName += "_M_" + numRows + "_N_" + numCols
+    jobName +=  "_oi_" + maxOuterIter + "_ii_" + maxInnerIter + "_K_" + numFactors +
       "_rb_" + numRowBlocks + "_cb_" + numColBlocks +
       "_ugr_" + updateGammaR + "_ugc_" + updateGammaC + 
       "_gr_" + gamma_r_init + "_gc_" + gamma_c_init + 
       "_lr_" + lambda_r + "_lc_" + lambda_c
-    val logPath = outputDir + JOB_NAME + ".txt"
+    val logPath = outputDir + jobName + ".txt"
     
     System.setProperty("spark.local.dir", tmpDir)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-    System.setProperty("spark.storage.memoryFraction", "0.2")
-//    System.setProperty("spark.ui.port", "44717")
-//    System.setProperty("spark.locality.wait", "10000")
-//    System.setProperty("spark.worker.timeout", "3600")
-//    System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
-//    System.setProperty("spark.akka.timeout", "60")
-//    System.setProperty("spark.akka.askTimeout", "60")
+//    System.setProperty("spark.storage.memoryFraction", "0.2")
+    System.setProperty("spark.locality.wait", "10000")
+    System.setProperty("spark.worker.timeout", "3600")
+    System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
+    System.setProperty("spark.akka.timeout", "60")
+    System.setProperty("spark.akka.askTimeout", "60")
 //    System.setProperty("spark.serializer", 
 //        "org.apache.spark.serializer.KryoSerializer")
 //    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
-//    System.setProperty("spark.kryoserializer.buffer.mb", "100")
+//    System.setProperty("spark.kryoserializer.buffer.mb", "64")
 //    System.setProperty("spark.kryo.referenceTracking", "false")
 //  System.setProperty("spark.mesos.coarse", "true")
 //    System.setProperty("spark.cores.max", numCores.toString)
     
     val storageLevel = storage.StorageLevel.MEMORY_AND_DISK_SER
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
-//    val sc = new SparkContext(MODE, JOB_NAME, System.getenv("SPARK_HOME"), 
-//        Seq(System.getenv("SPARK_EXAMPLES_JAR")))
-    val sc = new SparkContext(MODE, JOB_NAME, System.getenv("SPARK_HOME"), JARS)
+    val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
     
     val rowPartitionMap = sc.broadcast(getPartitionMap(numRows, numRowBlocks, bwLog))
     val colPartitionMap = sc.broadcast(getPartitionMap(numCols, numColBlocks, bwLog))
     val dataPartitioner = new HashPartitioner(numSlices)
     val paraPartitioner = new HashPartitioner(numReducers)
+    
     // read in the sparse matrix:
     val trainingTuples =
-      if (synthetic || TRAINING_PATH.toLowerCase.contains("ml")) 
-        sc.sequenceFile[NullWritable, Record](TRAINING_PATH, numSlices)
-          .mapPartitions(_.map(pair => 
-            new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale)))
-      else if (TRAINING_PATH.toLowerCase.contains("eachmovie"))
-        sc.textFile(TRAINING_PATH, numSlices)
-          .mapPartitions(_.map(line => parseLine(line, " ", mean, scale)))
+      if (synthetic || trainingPath.toLowerCase.contains("ml")) 
+        sc.sequenceFile[NullWritable, Record](trainingPath)
+          .map(pair => 
+            new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
+      else if (trainingPath.toLowerCase.contains("eachmovie"))
+        sc.textFile(trainingPath, numSlices)
+          .map(line => parseLine(line, " ", mean, scale))
       else 
-        sc.textFile(TRAINING_PATH, numSlices)
+        sc.textFile(trainingPath, numSlices)
           .flatMap(line => parseLine(line, mean, scale))
-          
+    
+    trainingTuples.persist(storageLevel)
+    val rowIdxSet = new HashSet[Int]
+    val colIdxSet = new HashSet[Int]
+    trainingTuples.collect.foreach(record => {
+      rowIdxSet.add(record.rowIdx)
+      colIdxSet.add(record.colIdx)
+    })
+    
+    println("rowIdxSet size: " + rowIdxSet.size)
+    println("colIdxSet size: " + colIdxSet.size) 
+    
     val trainingData = getPartitionedData(trainingTuples, numColBlocks, 
-        rowPartitionMap, colPartitionMap, dataPartitioner)
-    trainingData.persist(storageLevel)
+        rowPartitionMap, colPartitionMap, dataPartitioner).persist(storageLevel)
+    
     val samplesPerBlock = trainingData.map(pair => pair._2.col_idx.length).collect
     val rowsPerBlock = trainingData.map(pair => pair._2.row_ptr.length).collect
     val colsPerBlock = trainingData.map(pair => pair._2.col_ptr.length).collect
     val numTrainingSamples = samplesPerBlock.sum
-    val numRows1 = trainingData.map(pair => 
-      pair._2.rowMap(pair._2.rowMap.length-1)).reduce(math.max(_,_))
-    val numCols1 = trainingData.map(pair => 
-      pair._2.colMap(pair._2.colMap.length-1)).reduce(math.max(_,_))
-    println("num of rows: " + numRows1)
-    println("num of cols: " + numCols1)
     var b = 0
     println("samples per block:")
     while (b < numSlices) {
@@ -399,14 +403,14 @@ object PMF extends Settings {
     }
     println
     val testingTuples = 
-      if (synthetic || TRAINING_PATH.toLowerCase.contains("ml"))
-        sc.sequenceFile[NullWritable, Record](TESTING_PATH, numSlices).map(pair =>
+      if (synthetic || testingPath.toLowerCase.contains("ml"))
+        sc.sequenceFile[NullWritable, Record](testingPath, numSlices).map(pair =>
           new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
-      else if (TRAINING_PATH.toLowerCase.contains("eachmovie"))
-        sc.textFile(TESTING_PATH, numSlices)
+      else if (testingPath.toLowerCase.contains("eachmovie"))
+        sc.textFile(testingPath, numSlices)
           .map(line => parseLine(line, " ", mean, scale))
       else 
-        sc.textFile(TESTING_PATH, numSlices)
+        sc.textFile(testingPath, numSlices)
           .flatMap(line => parseLine(line, mean, scale))  
     val testingData = getPartitionedData(testingTuples, numColBlocks, 
         rowPartitionMap, colPartitionMap, dataPartitioner)

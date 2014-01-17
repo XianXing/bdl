@@ -3,7 +3,7 @@ package mf
 import java.io._
 
 import scala.util._
-import scala.collection.mutable.HashSet
+import scala.collection.mutable.{HashSet, ListBuffer}
 import scala.math._
 
 import org.apache.spark.rdd.RDD
@@ -34,7 +34,6 @@ object GenSynMat extends Settings{
   val numSlices = numRowBlocks*numColBlocks
   val MODE = "local[" + numCores + "]"
   val JARS = Seq("sparkproject.jar")
-  val gamma = 1f
   val lambda = 10f
   val tmpDir = "tmp"
   val sparsity = 0.01
@@ -55,7 +54,6 @@ object GenSynMat extends Settings{
     options.addOption(NUM_COL_BLOCKS_OPTION, true, "number of column blocks")
     options.addOption(NUM_ROW_BLOCKS_OPTION, true, "number of row blocks")
     options.addOption(LAMBDA_INIT_OPTION, true, "set lambda value")
-    options.addOption(GAMMA_INIT_OPTION, true, "set gamma value")
     options.addOption(NUM_LATENT_FACTORS_OPTION, true, "number of latent factors")
     options.addOption(JAR_OPTION, true, "the path to find jar file")
     options.addOption(TMP_DIR_OPTION, true, "the local dir for tmp files")
@@ -106,10 +104,6 @@ object GenSynMat extends Settings{
         line.getOptionValue(NUM_COL_BLOCKS_OPTION).toInt
       else 1
     val NUM_PARTITIONS = numRowBlocks*numColBlocks
-    val gamma = 
-      if (line.hasOption(GAMMA_INIT_OPTION)) 
-        line.getOptionValue(GAMMA_INIT_OPTION).toFloat
-      else 1f
     val lambda = 
       if (line.hasOption(LAMBDA_INIT_OPTION))
         line.getOptionValue(LAMBDA_INIT_OPTION).toFloat
@@ -137,20 +131,23 @@ object GenSynMat extends Settings{
     
     System.setProperty("spark.local.dir", tmpDir)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-    System.setProperty("spark.serializer", 
-        "org.apache.spark.serializer.KryoSerializer")
-    System.setProperty("spark.kryoserializer.buffer.mb", "100")
-    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
-    System.setProperty("spark.kryo.referenceTracking", "false")
+//    System.setProperty("spark.serializer", 
+//        "org.apache.spark.serializer.KryoSerializer")
+//    System.setProperty("spark.kryoserializer.buffer.mb", "1024")
+//    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
+//    System.setProperty("spark.kryo.referenceTracking", "false")
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
     
-//    System.setProperty("spark.worker.timeout", "3600")
-//    System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
+    System.setProperty("spark.worker.timeout", "3600")
+    System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
+    System.setProperty("spark.storage.blockManagerHeartBeatMs", "8000000")
     
     val StorageLevel = storage.StorageLevel.MEMORY_AND_DISK_SER
     val JOB_NAME = "Syn" + "_M_" + numRows + "_N_" + numCols + "_K_" + numFactors + 
-      "_spa_" + sparsity + "_tr_" + train_ratio + "_ga_" + gamma + "_lam_" + lambda
+      "_spa_" + sparsity + "_tr_" + train_ratio + "_lam_" + lambda
     val sc = new SparkContext(MODE, JOB_NAME, System.getenv("SPARK_HOME"), JARS)
+    
+    val gamma = math.sqrt(numFactors)
     
     val rowBlocks = sc.parallelize((0 until numRowBlocks), numRowBlocks).map(pid => {
       val blockSize = numRows/numRowBlocks
@@ -182,8 +179,10 @@ object GenSynMat extends Settings{
       val r = x ^ (x >>> 20) ^ (x >>> 12)
       r ^ (r >>> 7) ^ (r >>> 4)
     }
-    val numTrainAcc = sc.accumulator(0)
-    val numTestAcc = sc.accumulable(0)
+    val numTrain = sc.accumulator(0)
+    val numTest = sc.accumulator(0)
+    val secondMoment = sc.accumulator(0.0)
+    val firstMoment = sc.accumulator(0.0)
     
     val syntheticData = rowBlocks.cartesian(colBlocks).map{
       case ((rowBID, rowFactors), (colBID, colFactors)) => {
@@ -191,14 +190,11 @@ object GenSynMat extends Settings{
         val numRows = rowFactors.length
         val numCols = colFactors.length
         val seed = hash(bid)
-        val random_spa = new Random(seed)
-        val random_train = new Random(seed)
+        val random_int = new Random(seed)
         val random_normal = new Random(seed)
         val colIdxSet = new HashSet[Int]()
         var trainingRecords : List[Record] = Nil
         var testingRecords : List[Record] = Nil
-        var train_count = 0
-        var test_count = 0
         var m = 0
         while (m < numRows) {
           val rowFactor = rowFactors(m)
@@ -207,34 +203,35 @@ object GenSynMat extends Settings{
           var i = 0
           val mean = sparsity*numCols
           val variance = numCols*sparsity*(1-sparsity)
-          val nnz_row = mean + random_normal.nextGaussian*math.sqrt(variance)
+          val nnz_row = (mean + random_normal.nextGaussian*math.sqrt(variance)).toInt
+          val num_train = (nnz_row*train_ratio).toInt
+          val num_test = nnz_row - num_train
           while(i < nnz_row) {
-            val n = drawColIdx(random_spa, colIdxSet, numCols)
-            val colFactor = colFactors(n)
+            val n = drawColIdx(random_int, colIdxSet, numCols)
             val colIdx = n*numColBlocks+colBID
-            val value = Vector(rowFactor).dot(Vector(colFactor))
-            if (random_train.nextDouble < train_ratio) {
+            val value = Vector(rowFactor).dot(Vector(colFactors(n)))
+            firstMoment += value
+            secondMoment += value*value
+            if (i < num_train) {
               val noise = (random_normal.nextGaussian/math.sqrt(lambda)).toFloat
               trainingRecords = 
                 new Record(rowIdx, colIdx, value+noise) :: trainingRecords
-              numTrainAcc += 1
+              numTrain += 1
             }
             else {
               testingRecords = new Record(rowIdx, colIdx, value) :: testingRecords
-              numTestAcc += 1
+              numTest += 1
             }
             i += 1
           }
-           m += 1
+          m += 1
         }
-//        val trainingData = SparseMatrix(trainingRecords.toArray)
-//        val testingData = SparseMatrix(testingRecords.toArray)
-//        (bid, trainingData, testingData)
         (trainingRecords, testingRecords)
       }
     }.persist(StorageLevel)
     val TRAINING_DIR = OUTPUT_DIR + "train_" + JOB_NAME + PATH_SEPERATOR
     val TESTING_DIR = OUTPUT_DIR + "test_" + JOB_NAME + PATH_SEPERATOR
+        
     syntheticData.flatMap(_._1).map((NullWritable.get, _))
       .saveAsSequenceFile(TRAINING_DIR)
     syntheticData.flatMap(_._2).map((NullWritable.get, _))
@@ -242,13 +239,18 @@ object GenSynMat extends Settings{
 //    syntheticData.flatMap(_._2).map((NullWritable.get, _))
 //      .saveAsHadoopFile[SequenceFileOutputFormat[NullWritable, Record]](TRAINING_DIR)
     
-    val bwLog = new BufferedWriter(new FileWriter(new File(OUTPUT_DIR+"log")))
+    val bwLog = new BufferedWriter(new FileWriter(new File(JOB_NAME)))
     bwLog.write(JOB_NAME+"\n")
     val elpasedTime = (System.currentTimeMillis() - currentTime)*0.001
-    println("number of training samples: " + numTrainAcc.value)
-    bwLog.write("number of training samples: " + numTrainAcc.value + "\n")
-    println("number of testing samples: " + numTestAcc.value)
-    bwLog.write("number of testing samples: " + numTestAcc.value + "\n")
+    println("number of training samples: " + numTrain.value)
+    bwLog.write("number of training samples: " + numTrain.value + "\n")
+    println("number of testing samples: " + numTest.value)
+    bwLog.write("number of testing samples: " + numTest.value + "\n")
+    val nnz = numTrain.value+numTest.value
+    println("average first moment: " + firstMoment.value/nnz)
+    println("average second moment: " + secondMoment.value/nnz + "\n")
+    bwLog.write("average first moment: " + firstMoment.value/nnz + "\n")
+    bwLog.write("average second moment: " + secondMoment.value/nnz)
     println("generating synthetic matrix finished in " + elpasedTime + "(s)")
     bwLog.write("generating synthetic matrix finished in " + elpasedTime + "(s)\n")
     bwLog.close

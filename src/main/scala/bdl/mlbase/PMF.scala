@@ -17,6 +17,8 @@
 
 package mlbase
 
+import java.io._
+
 import scala.collection.mutable.{ArrayBuffer, BitSet}
 import scala.util.Random
 import scala.util.Sorting
@@ -27,11 +29,12 @@ import org.apache.spark.rdd._
 import org.apache.spark.serializer.KryoRegistrator
 import org.apache.spark.SparkContext._
 
+import org.apache.hadoop.io.NullWritable
+
 import com.esotericsoftware.kryo.Kryo
-//import org.jblas.{DoubleMatrix, SimpleBlas, Solve}
+
 import preprocess.MF._
 import utilities.Record
-import java.io._
 /**
  * Out-link information for a user or product block. This includes the original user/product IDs
  * of the elements within this block, and the list of destination blocks that each user or
@@ -579,9 +582,10 @@ object PMF {
       if (trainingPath.toLowerCase.contains("eachmovie"))
         sc.textFile(trainingPath).map(line => 
           new Rating(parseLine(line, " ", mean, scale)))
-      else if (trainingPath.toLowerCase.contains("wiki"))
-        sc.objectFile[Tuple3[Int, Int, Float]](trainingPath)
-          .map(tuple => new Rating(tuple._1, tuple._2, (tuple._3-mean)/scale))
+      else if (trainingPath.toLowerCase.contains("syn"))
+        sc.sequenceFile[NullWritable, Record](trainingPath)
+          .map(pair => 
+            new Rating(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
       else sc.textFile(trainingPath).flatMap(line => parseLine(line, mean, scale))
         .map(record => new Rating(record))
     trainingData.persist(STORAGE_LEVEL)
@@ -589,9 +593,10 @@ object PMF {
       if (testingPath.toLowerCase.contains("eachmovie")) 
         sc.textFile(testingPath).map(line => 
           new Rating(parseLine(line, " ", mean, scale)))
-      else if (testingPath.toLowerCase.contains("wiki"))
-        sc.objectFile[Tuple3[Int, Int, Float]](testingPath)
-          .map(tuple => new Rating(tuple._1, tuple._2, (tuple._3-mean)/scale))
+      else if (testingPath.toLowerCase.contains("syn"))
+        sc.sequenceFile[NullWritable, Record](testingPath)
+          .map(pair => 
+            new Rating(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
       else 
         sc.textFile(testingPath).flatMap(line => parseLine(line, mean, scale))
           .map(record => new Rating(record))

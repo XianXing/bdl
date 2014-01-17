@@ -175,6 +175,7 @@ object LR extends Settings {
     System.setProperty("spark.default.parallelism", numReducers.toString)
     System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
+//    System.setProperty("spark.executor.memory", "4g")
 //    System.setProperty("spark.speculation", "true")
 //    System.setProperty("spark.serializer", 
 //        "org.apache.spark.serializer.KryoSerializer")
@@ -220,8 +221,7 @@ object LR extends Settings {
           sc.objectFile[Array[Int]](trainingDataDir).flatMap(countArr(_, featureThre/2))
         }
         else sc.textFile(trainingDataDir).flatMap(countLine(_, featureThre/2))
-      }.reduceByKey(featurePartitioner, _+_)
-      .filter(_._2 >= featureThre).map(_._1).collect.sorted
+      }.reduceByKey(_+_, 20).filter(_._2 >= featureThre).map(_._1).collect.sorted
       else null
     
     val featureMapBC = 

@@ -119,15 +119,22 @@ object SparseMatrix {
     //and compressed sparse column (CSC) formats
     val nnz = records.length
     val rowSet = new HashSet[Int]; val colSet = new HashSet[Int]
+    System.err.println("begin to build the sparse,  nnz: " + nnz)
     val row_idx = new Array[Int](nnz); val col_idx = new Array[Int](nnz)
     val value_r = new Array[Float](nnz); val value_c = new Array[Float](nnz)
-    
+    System.err.println("all large arrays initialized")
     var i = 0
-    while (i < nnz) { 
+    var maxRowIdx = 0
+    var maxColIdx = 0
+    while (i < nnz) {
+      maxRowIdx = math.max(records(i).rowIdx, maxRowIdx)
+      maxColIdx = math.max(records(i).colIdx, maxColIdx)
       rowSet.add(records(i).rowIdx); colSet.add(records(i).colIdx); i += 1 
     }
     val numRows = rowSet.size
     val numCols = colSet.size
+    System.err.println("numRows: " + numRows + " maxRowIdx: " + maxRowIdx)
+    System.err.println("numCols: " + numCols + " maxColIdx: " + maxColIdx)
     val row_ptr = Array.ofDim[Int](numRows+1)
     val col_ptr = Array.ofDim[Int](numCols+1)
     val rowMap = new HashMap[Int, Int]
@@ -182,6 +189,7 @@ object SparseMatrix {
     }
     c = numCols; while(c > 0) {col_ptr(c) = col_ptr(c-1); c -= 1}
     col_ptr(0) = 0
+    System.err.println("finished sparse matrix initializing")
     new SparseMatrix(row_ptr, col_idx, value_r, col_ptr, row_idx, value_c, 
         rowArray, colArray, numRows, numCols)
   }
@@ -190,7 +198,6 @@ object SparseMatrix {
     //sparse matrix implemented with compressed sparse row (CSR) format
     val numCols = featureMatrix.length
     System.err.println("num of data: " + numCols)
-    System.out.println("num of data: " + numCols)
     val isBinary = featureMatrix(0).isBinary
     val rowSet = new HashSet[Int]
     var nnz = 0
