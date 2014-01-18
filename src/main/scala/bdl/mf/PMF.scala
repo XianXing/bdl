@@ -58,6 +58,7 @@ object PMF extends Settings {
   val updateGammaC = vb
   val mode = "local[" + numCores + "]"
   val jars = Seq("sparkproject.jar")
+  val memory = "1g"
   val tmpDir = "tmp"
   val multicore = numCores > numSlices
   val interval = 2
@@ -187,7 +188,10 @@ object PMF extends Settings {
     options.addOption(NUM_LATENT_FACTORS_OPTION, true, "number of latent factors")
     options.addOption(ISO_OPTION, false, "isolated learning for partitions")
     options.addOption(JAR_OPTION, true, "the path to find jar file")
-    options.addOption(TMP_DIR_OPTION, true, "the local dir for tmp files")
+    options.addOption(TMP_DIR_OPTION, true, 
+        "local dir for tmp files, including map output files and RDDs stored on disk")
+    options.addOption(MEMORY_OPTION, true, 
+        "amount of memory to use per executor process")
     options.addOption(L1_REGULARIZATION, false, "use l1 regularization")
     options.addOption(NUM_ROWS_OPTION, true, "number of rows")
     options.addOption(NUM_COLS_OPTION, true, "number of cols")
@@ -301,6 +305,9 @@ object PMF extends Settings {
     val tmpDir = if (line.hasOption(TMP_DIR_OPTION))
       line.getOptionValue(TMP_DIR_OPTION)
       else "tmp"
+    val memory = if (line.hasOption(MEMORY_OPTION))
+      line.getOptionValue(MEMORY_OPTION)
+      else "512m"
     val l1 = line.hasOption(L1_REGULARIZATION)
     val max_norm = line.hasOption(MAX_NORM_OPTION)
     val multicore = line.hasOption(MULTICORE_OPTION)
@@ -325,9 +332,10 @@ object PMF extends Settings {
       "_lr_" + lambda_r + "_lc_" + lambda_c
     val logPath = outputDir + jobName + ".txt"
     
+    System.setProperty("spark.executor.memory", memory)
     System.setProperty("spark.local.dir", tmpDir)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-//    System.setProperty("spark.storage.memoryFraction", "0.2")
+//    System.setProperty("spark.storage.memoryFraction", "0.25")
     System.setProperty("spark.locality.wait", "10000")
     System.setProperty("spark.worker.timeout", "3600")
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
@@ -362,18 +370,7 @@ object PMF extends Settings {
       else 
         sc.textFile(trainingPath, numSlices)
           .flatMap(line => parseLine(line, mean, scale))
-    
-    trainingTuples.persist(storageLevel)
-    val rowIdxSet = new HashSet[Int]
-    val colIdxSet = new HashSet[Int]
-    trainingTuples.collect.foreach(record => {
-      rowIdxSet.add(record.rowIdx)
-      colIdxSet.add(record.colIdx)
-    })
-    
-    println("rowIdxSet size: " + rowIdxSet.size)
-    println("colIdxSet size: " + colIdxSet.size) 
-    
+        
     val trainingData = getPartitionedData(trainingTuples, numColBlocks, 
         rowPartitionMap, colPartitionMap, dataPartitioner).persist(storageLevel)
     
@@ -556,9 +553,9 @@ object PMF extends Settings {
       iterTime = System.currentTimeMillis()
       iter += 1
       if (iter < maxOuterIter) {
-        val thre = 0.00001f
-//        val innerIter = maxInnerIter
-        val innerIter = math.max(maxInnerIter - 2*iter, 2)
+        val thre = 0.001f
+        val innerIter = maxInnerIter
+//        val innerIter = math.max(maxInnerIter - 2*iter, 2)
         val rddId = localOutputs.id
         localOutputs = trainingData.join(localModels).join(priors).mapValues{
           case((data, model), (rowPriorsPairs, colPriorsPairs)) => {

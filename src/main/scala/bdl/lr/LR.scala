@@ -39,6 +39,7 @@ object LR extends Settings {
   val cg = false
   val l1 = true
   val tmpDir = "tmp"
+  val memory = "1g"
   val numReducers = 2*numCores
   val jars = Seq("sparkproject.jar")
   val stopCriteria = 1e-6
@@ -76,6 +77,8 @@ object LR extends Settings {
     options.addOption(GAMMA_INIT_OPTION, true, "set gamma value")
     options.addOption(JAR_OPTION, true, "the path to find jar file")
     options.addOption(TMP_DIR_OPTION, true, "the local dir for tmp files")
+    options.addOption(MEMORY_OPTION, true, 
+        "amount of memory to use per executor process")
     options.addOption(L1_REGULARIZATION_OPTION, false, "use l1 regularization")
     options.addOption(FEATURE_THRESHOLD_OPTION, true, 
         "threshold on the used features' frequences")
@@ -152,6 +155,9 @@ object LR extends Settings {
     val tmpDir = if (line.hasOption(TMP_DIR_OPTION))
       line.getOptionValue(TMP_DIR_OPTION)
       else "tmp"
+    val memory = if (line.hasOption(MEMORY_OPTION))
+      line.getOptionValue(MEMORY_OPTION)
+      else "512m"
     val l1 = line.hasOption(L1_REGULARIZATION)
     val isBinary = line.hasOption(BINARY_FEATURES_OPTION)
     val isSeq = line.hasOption(SEQUENCE_FILE_OPTION)
@@ -172,10 +178,10 @@ object LR extends Settings {
       else 1
     
     System.setProperty("spark.local.dir", tmpDir)
+    System.setProperty("spark.executor.memory", memory)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-    System.setProperty("spark.storage.memoryFraction", "0.5")
+//    System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
-//    System.setProperty("spark.executor.memory", "4g")
 //    System.setProperty("spark.speculation", "true")
 //    System.setProperty("spark.serializer", 
 //        "org.apache.spark.serializer.KryoSerializer")

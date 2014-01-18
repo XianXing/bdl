@@ -206,14 +206,14 @@ class PMF private (var numBlocks: Int, var rank: Int, var iterations: Int, vb: B
       val iterTime = System.currentTimeMillis()
       productsPara = updateCCD(usersPara, productsPara, userOutLinks, productInLinks, 
          partitioner, rank, gamma_c_init, vb).persist(STORAGE_LEVEL)
-      productsPara.count
-      sc.getPersistentRDDs(productRDDID).unpersist(false)
-      productRDDID = productsPara.id
+//      productsPara.count
+//      sc.getPersistentRDDs(productRDDID).unpersist(false)
+//      productRDDID = productsPara.id
       usersPara = updateCCD(productsPara, usersPara, productOutLinks, userInLinks, 
          partitioner, rank, gamma_r_init, vb).persist(STORAGE_LEVEL)
-      usersPara.count
-      sc.getPersistentRDDs(userRDDID).unpersist(false)
-      userRDDID = usersPara.id
+//      usersPara.count
+//      sc.getPersistentRDDs(userRDDID).unpersist(false)
+//      userRDDID = usersPara.id
       if (iter % interval == 0 || iter == iterations) {
         
         val trainingRMSE =
@@ -236,7 +236,7 @@ class PMF private (var numBlocks: Int, var rank: Int, var iterations: Int, vb: B
         
         val time = (System.currentTimeMillis() - iterTime)*0.001
         println("\nIter: " + iter + " time elapsed: " + time)
-        println("Training RMSE: "+ trainingRMSE + "\ttesting RMSE: " + testingRMSE)
+        println("Training RMSE: "+ trainingRMSE + "\tTesting RMSE: " + testingRMSE)
         bwLog.write("\nIter: " + iter + " time elapsed: " + time + "\n")
         bwLog.write("Training RMSE: "+ trainingRMSE + "\ttesting RMSE: "
             + testingRMSE + "\n")
@@ -527,7 +527,7 @@ object PMF {
       .run(sc, trainingData, testingData, scale, logPath, interval)
   }
 
-  private class ALSRegistrator extends KryoRegistrator {
+  private class PMFRegister extends KryoRegistrator {
     override def registerClasses(kryo: Kryo) {
       kryo.register(classOf[Rating])
     }
@@ -569,9 +569,10 @@ object PMF {
     val logPath = outputDir + "/" + job + "_rank_" + rank + "_iter_" + 
       iters + "_blocks_" + blocks + "_gamma_r_" + gamma_r_init +
       "_gamma_c_" + gamma_c_init + "_scale_" + scale + ".txt"
-//    System.setProperty("spark.serializer", "spark.KryoSerializer")
-//    System.setProperty("spark.kryo.registrator", classOf[ALSRegistrator].getName)
-//    System.setProperty("spark.kryo.referenceTracking", "false")
+    System.setProperty("spark.serializer", 
+        "org.apache.spark.serializer.KryoSerializer")
+    System.setProperty("spark.kryo.registrator", classOf[PMFRegister].getName)
+    System.setProperty("spark.kryo.referenceTracking", "false")
 //    System.setProperty("spark.kryoserializer.buffer.mb", "128")
     System.setProperty("spark.local.dir", tmpDir)
 //    System.setProperty("spark.ui.port", "44717")

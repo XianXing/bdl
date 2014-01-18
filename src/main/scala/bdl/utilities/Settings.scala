@@ -121,4 +121,5 @@ trait Settings {
   val IS_OPTION = "IS"
   val NUM_SAMPLES_OPTION = "num_samples"
   val SEQUENCE_FILE_OPTION = "seq"
+  val MEMORY_OPTION = "memory"
 }

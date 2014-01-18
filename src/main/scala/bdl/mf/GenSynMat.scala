@@ -131,11 +131,11 @@ object GenSynMat extends Settings{
     
     System.setProperty("spark.local.dir", tmpDir)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-//    System.setProperty("spark.serializer", 
-//        "org.apache.spark.serializer.KryoSerializer")
+    System.setProperty("spark.serializer", 
+        "org.apache.spark.serializer.KryoSerializer")
 //    System.setProperty("spark.kryoserializer.buffer.mb", "1024")
-//    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
-//    System.setProperty("spark.kryo.referenceTracking", "false")
+    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
+    System.setProperty("spark.kryo.referenceTracking", "false")
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
     
     System.setProperty("spark.worker.timeout", "3600")
@@ -181,8 +181,8 @@ object GenSynMat extends Settings{
     }
     val numTrain = sc.accumulator(0)
     val numTest = sc.accumulator(0)
-    val secondMoment = sc.accumulator(0.0)
-    val firstMoment = sc.accumulator(0.0)
+    val secondMoment = sc.accumulator(0.0f)
+    val firstMoment = sc.accumulator(0.0f)
     
     val syntheticData = rowBlocks.cartesian(colBlocks).map{
       case ((rowBID, rowFactors), (colBID, colFactors)) => {
@@ -192,6 +192,7 @@ object GenSynMat extends Settings{
         val seed = hash(bid)
         val random_int = new Random(seed)
         val random_normal = new Random(seed)
+        val random_float = new Random(seed)
         val colIdxSet = new HashSet[Int]()
         var trainingRecords : List[Record] = Nil
         var testingRecords : List[Record] = Nil
@@ -204,15 +205,13 @@ object GenSynMat extends Settings{
           val mean = sparsity*numCols
           val variance = numCols*sparsity*(1-sparsity)
           val nnz_row = (mean + random_normal.nextGaussian*math.sqrt(variance)).toInt
-          val num_train = (nnz_row*train_ratio).toInt
-          val num_test = nnz_row - num_train
           while(i < nnz_row) {
             val n = drawColIdx(random_int, colIdxSet, numCols)
             val colIdx = n*numColBlocks+colBID
             val value = Vector(rowFactor).dot(Vector(colFactors(n)))
             firstMoment += value
             secondMoment += value*value
-            if (i < num_train) {
+            if (random_float.nextFloat < train_ratio) {
               val noise = (random_normal.nextGaussian/math.sqrt(lambda)).toFloat
               trainingRecords = 
                 new Record(rowIdx, colIdx, value+noise) :: trainingRecords
@@ -231,7 +230,7 @@ object GenSynMat extends Settings{
     }.persist(StorageLevel)
     val TRAINING_DIR = OUTPUT_DIR + "train_" + JOB_NAME + PATH_SEPERATOR
     val TESTING_DIR = OUTPUT_DIR + "test_" + JOB_NAME + PATH_SEPERATOR
-        
+    
     syntheticData.flatMap(_._1).map((NullWritable.get, _))
       .saveAsSequenceFile(TRAINING_DIR)
     syntheticData.flatMap(_._2).map((NullWritable.get, _))
