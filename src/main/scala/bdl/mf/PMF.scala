@@ -18,17 +18,17 @@ import org.apache.hadoop.io.NullWritable
 // random row/col subsampling
 object PMF extends Settings {
   
-  val synthetic = false
-  val trainingPath = if (synthetic) 
-    "output/train_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
+  val syn = false
+  val trainingPath = 
+    if (syn) "output/train_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
     else "input/ml-1m/mf_train"
-  val testingPath = if (synthetic) 
-    "output/test_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
+  val testingPath = 
+    if (syn) "output/test_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
     else "input/ml-1m/mf_test"
   val outputDir = "output/"
-  val numCores = 2
+  val numCores = 1
   val numRowBlocks = 2
-  val numColBlocks = 2
+  val numColBlocks = 1
   val gamma_r_init = 10f
   val gamma_c_init = 10f
   val gamma_x_init = 1f
@@ -43,9 +43,9 @@ object PMF extends Settings {
   val vb = true
   val admm = true
   //for each movie, numRows = 1621, numCols = 55423, mean: 4.037181f
-  val numRows = if (synthetic) 50000 else 6041
-  val numCols = if (synthetic) 50000 else 3953
-  val mean = if (synthetic) 0f else 3.7668543f
+  val numRows = if (syn) 50000 else 6041
+  val numCols = if (syn) 50000 else 3953
+  val mean = if (syn) 0f else 3.7668543f
   val scale = 1
   val numReducers = 5*numCores
   val numSlices = numRowBlocks*numColBlocks
@@ -199,7 +199,7 @@ object PMF extends Settings {
         "multicore computing on each machine")
     options.addOption(MAX_NORM_OPTION, false, "use max-norm regilarization")
     options.addOption(INTERVAL_OPTION, true, "interval to calculate testing RMSE")
-    options.addOption(SYNTHETIC_DATA_OPTION, false, "using synthetic data")
+    options.addOption(SYNTHETIC_DATA_OPTION, false, "using syn data")
     
     val parser = new GnuParser();
     val formatter = new HelpFormatter();
@@ -235,11 +235,11 @@ object PMF extends Settings {
       else 1f
     val numRows = 
       if (line.hasOption(NUM_ROWS_OPTION))
-        line.getOptionValue(NUM_ROWS_OPTION).toInt+1
+        line.getOptionValue(NUM_ROWS_OPTION).toInt
       else 5000000
     val numCols = 
       if (line.hasOption(NUM_COLS_OPTION))
-        line.getOptionValue(NUM_COLS_OPTION).toInt+1
+        line.getOptionValue(NUM_COLS_OPTION).toInt
       else 5000000
     val numReducers =
       if (line.hasOption(NUM_REDUCERS_OPTION))
@@ -315,7 +315,7 @@ object PMF extends Settings {
       if (line.hasOption(INTERVAL_OPTION))
         line.getOptionValue(INTERVAL_OPTION).toInt
       else 1
-    val synthetic = line.hasOption(SYNTHETIC_DATA_OPTION)
+    val syn = line.hasOption(SYNTHETIC_DATA_OPTION)
     
     var jobName = "DIST_MF"
     if (vb) jobName += "_VB" else jobName += "_MAP"
@@ -324,7 +324,7 @@ object PMF extends Settings {
     if (l1) jobName += "_l1"
     if (max_norm) jobName += "_max_norm"
     if (iso) jobName += "_iso"
-    if (synthetic) jobName += "_M_" + numRows + "_N_" + numCols
+    if (syn) jobName += "_M_" + numRows + "_N_" + numCols
     jobName +=  "_oi_" + maxOuterIter + "_ii_" + maxInnerIter + "_K_" + numFactors +
       "_rb_" + numRowBlocks + "_cb_" + numColBlocks +
       "_ugr_" + updateGammaR + "_ugc_" + updateGammaC + 
@@ -335,7 +335,7 @@ object PMF extends Settings {
     System.setProperty("spark.executor.memory", memory)
     System.setProperty("spark.local.dir", tmpDir)
     System.setProperty("spark.default.parallelism", numReducers.toString)
-//    System.setProperty("spark.storage.memoryFraction", "0.25")
+    System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.locality.wait", "10000")
     System.setProperty("spark.worker.timeout", "3600")
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
@@ -349,7 +349,7 @@ object PMF extends Settings {
 //  System.setProperty("spark.mesos.coarse", "true")
 //    System.setProperty("spark.cores.max", numCores.toString)
     
-    val storageLevel = storage.StorageLevel.MEMORY_AND_DISK_SER
+    val storageLevel = storage.StorageLevel.MEMORY_ONLY
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
     
@@ -360,7 +360,7 @@ object PMF extends Settings {
     
     // read in the sparse matrix:
     val trainingTuples =
-      if (synthetic || trainingPath.toLowerCase.contains("ml")) 
+      if (syn || trainingPath.toLowerCase.contains("ml")) 
         sc.sequenceFile[NullWritable, Record](trainingPath)
           .map(pair => 
             new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
@@ -400,7 +400,7 @@ object PMF extends Settings {
     }
     println
     val testingTuples = 
-      if (synthetic || testingPath.toLowerCase.contains("ml"))
+      if (syn || testingPath.toLowerCase.contains("ml"))
         sc.sequenceFile[NullWritable, Record](testingPath, numSlices).map(pair =>
           new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
       else if (testingPath.toLowerCase.contains("eachmovie"))

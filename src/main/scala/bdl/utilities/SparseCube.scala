@@ -90,7 +90,6 @@ object SparseCube {
     def quickSort(start: Int, end: Int) : Unit = {
       if (start < end) {
         val pivot = (start+end)/2
-        val pivot_val = ids1(pivot)
         swap(start, pivot)
         var left = start+1
         var right = end

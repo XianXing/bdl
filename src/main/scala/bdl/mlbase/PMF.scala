@@ -206,14 +206,14 @@ class PMF private (var numBlocks: Int, var rank: Int, var iterations: Int, vb: B
       val iterTime = System.currentTimeMillis()
       productsPara = updateCCD(usersPara, productsPara, userOutLinks, productInLinks, 
          partitioner, rank, gamma_c_init, vb).persist(STORAGE_LEVEL)
-//      productsPara.count
-//      sc.getPersistentRDDs(productRDDID).unpersist(false)
-//      productRDDID = productsPara.id
+      productsPara.count
+      sc.getPersistentRDDs(productRDDID).unpersist(false)
+      productRDDID = productsPara.id
       usersPara = updateCCD(productsPara, usersPara, productOutLinks, userInLinks, 
          partitioner, rank, gamma_r_init, vb).persist(STORAGE_LEVEL)
-//      usersPara.count
-//      sc.getPersistentRDDs(userRDDID).unpersist(false)
-//      userRDDID = usersPara.id
+      usersPara.count
+      sc.getPersistentRDDs(userRDDID).unpersist(false)
+      userRDDID = usersPara.id
       if (iter % interval == 0 || iter == iterations) {
         
         val trainingRMSE =
@@ -607,11 +607,6 @@ object PMF {
     val model = 
       PMF.train(sc, trainingData, testingData, rank, iters, vb, gamma_r_init,
           gamma_c_init, scale, blocks, logPath, interval)
-//    model.userFeatures.map{ case (id, vec) => id + "," + vec.mkString(" ") }
-//                      .saveAsTextFile(outputDir + "/userFeatures")
-//    model.productFeatures.map{ case (id, vec) => id + "," + vec.mkString(" ") }
-//                         .saveAsTextFile(outputDir + "/productFeatures")
-//    println("Final user/product features written to " + outputDir)
     println("Total time elapsed: " + (System.currentTimeMillis() - time)*0.001)
     System.exit(0)
   }
