@@ -222,13 +222,10 @@ class Model (
     val row_ptr = data.row_ptr; val row_idx = data.row_idx
     val col_ptr = data.col_ptr; val col_idx = data.col_idx
     val value_r = data.value_r; val value_c = data.value_c
-    //here we reuse value_c and value_r for res_r and res_c respectively
+    
+    //here value_c and value_r are actually res_r and res_c respectively
     val res_r = value_r
-    Model.getResidual(row_ptr, col_idx, value_r, rowFactor, colFactor, 
-        multicore, res_r)
     val res_c = value_c
-    Model.getResidual(col_ptr, row_idx, value_c, colFactor, rowFactor, 
-        multicore, res_c)
     
     if (admm_r) ADMM.updateLag(rowFactor, multicore, rowLags, rowPriors)
     if (admm_c) ADMM.updateLag(colFactor, multicore, colLags, colPriors)

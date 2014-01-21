@@ -122,4 +122,9 @@ trait Settings {
   val NUM_SAMPLES_OPTION = "num_samples"
   val SEQUENCE_FILE_OPTION = "seq"
   val MEMORY_OPTION = "memory"
+  val NUM_OUTPUT_BLOCKS_OPTION = "num_output_blocks"
+  def hash(x: Int): Int = {
+    val r = x ^ (x >>> 20) ^ (x >>> 12)
+    r ^ (r >>> 7) ^ (r >>> 4)
+  }
 }

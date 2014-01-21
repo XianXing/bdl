@@ -3,7 +3,7 @@ package mf
 import java.io._
 
 import scala.util._
-import scala.collection.mutable.{HashSet, ListBuffer}
+import scala.collection.mutable.{HashSet, ListBuffer, ArrayBuffer}
 import scala.math._
 
 import org.apache.spark.rdd.RDD
@@ -27,17 +27,15 @@ object GenSynMat extends Settings{
   val OUTPUT_DIR = "output/"
   val TRAINING_DIR = OUTPUT_DIR + "train" + PATH_SEPERATOR
   val TESTING_DIR = OUTPUT_DIR + "test" + PATH_SEPERATOR
-  val numRows = 1000
-  val numCols = 1000
-  val numRowBlocks= 2
+  val numRows = 5000
+  val numCols = 5000
+  val numRowBlocks= 1
   val numColBlocks = 2
-  val numSlices = numRowBlocks*numColBlocks
+  val numSlices = Array[(Int, Int)]((4,4))
   val MODE = "local[" + numCores + "]"
   val JARS = Seq("sparkproject.jar")
-  val lambda = 10f
-  val tmpDir = "tmp"
-  val memory = "1g"
-  val sparsity = 0.01
+  val lambda = 100f
+  val sparsity = 0.1
   val train_ratio = 0.9
   
   def main(args : Array[String]) {
@@ -65,13 +63,14 @@ object GenSynMat extends Settings{
     options.addOption(NUM_COLS_OPTION, true, "number of cols")
     options.addOption(TRAINING_RATIO_OPTION, true, "training data ratio")
     options.addOption(SPARSITY_LEVEL_OPTION, true, "sparsity level")
+    options.addOption(NUM_OUTPUT_BLOCKS_OPTION, true, "num of output blocks to HDFS")
     
-    val parser = new GnuParser();
-    val formatter = new HelpFormatter();
-    val line = parser.parse(options, args);
+    val parser = new GnuParser()
+    val formatter = new HelpFormatter()
+    val line = parser.parse(options, args)
     if (line.hasOption(HELP) || args.length == 0) {
-      formatter.printHelp("Help", options);
-      System.exit(0);
+      formatter.printHelp("Help", options)
+      System.exit(0)
     }
     assert(line.hasOption(RUNNING_MODE_OPTION), "running mode not specified")
     assert(line.hasOption(OUTPUT_OPTION), "output path/directory not specified")
@@ -90,15 +89,11 @@ object GenSynMat extends Settings{
     val numRows = 
       if (line.hasOption(NUM_ROWS_OPTION))
         line.getOptionValue(NUM_ROWS_OPTION).toInt
-      else 10000000
+      else 1000000
     val numCols = 
       if (line.hasOption(NUM_COLS_OPTION))
         line.getOptionValue(NUM_COLS_OPTION).toInt
-      else 10000000
-    val numReducers =
-      if (line.hasOption(NUM_REDUCERS_OPTION))
-        line.getOptionValue(NUM_REDUCERS_OPTION).toInt
-      else 8
+      else 1000000
     val numRowBlocks = 
       if (line.hasOption(NUM_ROW_BLOCKS_OPTION)) 
         line.getOptionValue(NUM_ROW_BLOCKS_OPTION).toInt
@@ -107,7 +102,11 @@ object GenSynMat extends Settings{
       if (line.hasOption(NUM_COL_BLOCKS_OPTION)) 
         line.getOptionValue(NUM_COL_BLOCKS_OPTION).toInt
       else 1
-    val NUM_PARTITIONS = numRowBlocks*numColBlocks
+    val numOutputBlocks = 
+      if (line.hasOption(NUM_OUTPUT_BLOCKS_OPTION))
+        line.getOptionValue(NUM_OUTPUT_BLOCKS_OPTION).toInt
+      else numRowBlocks*numColBlocks
+        
     val lambda = 
       if (line.hasOption(LAMBDA_INIT_OPTION))
         line.getOptionValue(LAMBDA_INIT_OPTION).toFloat
@@ -116,17 +115,6 @@ object GenSynMat extends Settings{
       if (line.hasOption(NUM_LATENT_FACTORS_OPTION)) 
         line.getOptionValue(NUM_LATENT_FACTORS_OPTION).toInt
       else 20
-    val numSlices =
-      if (line.hasOption(NUM_SLICES_OPTION))
-        math.min(line.getOptionValue(NUM_SLICES_OPTION).toInt, 
-            numRowBlocks*numColBlocks)
-      else numRowBlocks*numColBlocks
-    val tmpDir = if (line.hasOption(TMP_DIR_OPTION))
-      line.getOptionValue(TMP_DIR_OPTION)
-      else "tmp"
-    val memory = if (line.hasOption(MEMORY_OPTION))
-      line.getOptionValue(MEMORY_OPTION)
-      else "512m"
     val train_ratio = 
       if (line.hasOption(TRAINING_RATIO_OPTION))
         line.getOptionValue(TRAINING_RATIO_OPTION).toFloat
@@ -135,42 +123,72 @@ object GenSynMat extends Settings{
       if (line.hasOption(SPARSITY_LEVEL_OPTION))
         line.getOptionValue(SPARSITY_LEVEL_OPTION).toFloat
       else 0.001f
+    val numSlices =
+      if (line.hasOption(NUM_SLICES_OPTION)) {
+        line.getOptionValue(NUM_SLICES_OPTION).split(",").map(token => {
+          val pair = token.split(":") 
+          (pair(0).toInt, pair(1).toInt)
+        }) 
+      }
+      else new Array[(Int, Int)](0)
+    if (line.hasOption(TMP_DIR_OPTION)) {
+      System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
+    }
+    if (line.hasOption(MEMORY_OPTION)) {
+      System.setProperty("spark.executor.memory", line.getOptionValue(MEMORY_OPTION))
+    }
+    if (line.hasOption(NUM_REDUCERS_OPTION) || line.hasOption(NUM_CORES_OPTION)) {
+      if (line.hasOption(NUM_REDUCERS_OPTION)) {
+        System.setProperty("spark.default.parallelism", 
+          line.getOptionValue(NUM_REDUCERS_OPTION))
+      }
+      else {
+        System.setProperty("spark.default.parallelism", 
+          line.getOptionValue(NUM_CORES_OPTION))
+      }
+    }
     
-    System.setProperty("spark.executor.memory", memory)
-    System.setProperty("spark.local.dir", tmpDir)
-    System.setProperty("spark.default.parallelism", numReducers.toString)
     System.setProperty("spark.serializer", 
         "org.apache.spark.serializer.KryoSerializer")
-//    System.setProperty("spark.kryoserializer.buffer.mb", "1024")
     System.setProperty("spark.kryo.registrator", "utilities.Registrator")
     System.setProperty("spark.kryo.referenceTracking", "false")
-//    System.setProperty("spark.storage.memoryFraction", "0.5")
-    
+//    System.setProperty("spark.kryoserializer.buffer.mb", "1024")
     System.setProperty("spark.worker.timeout", "3600")
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
     System.setProperty("spark.storage.blockManagerHeartBeatMs", "8000000")
     
-    val StorageLevel = storage.StorageLevel.MEMORY_ONLY
+    val StorageLevel = storage.StorageLevel.MEMORY_ONLY_SER
     val JOB_NAME = "Syn" + "_M_" + numRows + "_N_" + numCols + "_K_" + numFactors + 
       "_spa_" + sparsity + "_tr_" + train_ratio + "_lam_" + lambda
     val sc = new SparkContext(MODE, JOB_NAME, System.getenv("SPARK_HOME"), JARS)
     
-    val gamma = math.sqrt(numFactors)
+    val sigma = 1/math.sqrt(math.sqrt(numFactors))
     
-    val rowBlocks = sc.parallelize((0 until numRowBlocks), numRowBlocks).map(pid => {
-      val blockSize = numRows/numRowBlocks
+    //randomly partition the sparse matrix into blocks, 
+    //and generate synthetic data for each block
+    val seedRow = hash(numRows)
+    val rowBlockMapBC = sc.broadcast(getPartitionMap(numRows, numRowBlocks, seedRow))
+    val seedCol = hash(numCols+numRows)
+    val colBlockMapBC = sc.broadcast(getPartitionMap(numCols, numColBlocks, seedCol))
+    
+    val rowBlocks = sc.parallelize((0 until numRowBlocks), numRowBlocks).map(bid => {
+      val rowIndices = rowBlockMapBC.value.zipWithIndex.filter(_._1==bid).map(_._2)
       val gaussian = new Random
-      val rowFactors = Array.tabulate(blockSize)(i => 
-        Array.fill(numFactors)((gaussian.nextGaussian/math.sqrt(gamma)).toFloat))
-      (pid, rowFactors)
+      val rowFactors = rowIndices.map(rowIdx => {
+        gaussian.setSeed(hash(rowIdx))
+        Array.fill(numFactors)((gaussian.nextGaussian*sigma).toFloat)
+      })
+      (bid, rowFactors)
     }).persist(StorageLevel)
     println("number of row blocks: " + rowBlocks.count)
-    val colBlocks = sc.parallelize((0 until numColBlocks), numColBlocks).map(pid => {
-      val blockSize = numCols/numColBlocks
+    val colBlocks = sc.parallelize((0 until numColBlocks), numColBlocks).map(bid => {
+      val colIndices = colBlockMapBC.value.zipWithIndex.filter(_._1==bid).map(_._2)
       val gaussian = new Random
-      val colFactors = Array.tabulate(blockSize)(i => 
-        Array.fill(numFactors)((gaussian.nextGaussian/math.sqrt(gamma)).toFloat))
-      (pid, colFactors)
+      val colFactors = colIndices.map(colIdx => {
+        gaussian.setSeed(hash(colIdx+numRows))
+        Array.fill(numFactors)((gaussian.nextGaussian*sigma).toFloat)
+      })
+      (bid, colFactors)
     }).persist(StorageLevel)
     println("number of col blocks: " + colBlocks.count)
     
@@ -183,10 +201,6 @@ object GenSynMat extends Settings{
       }
     }
     
-    def hash(x: Int): Int = {
-      val r = x ^ (x >>> 20) ^ (x >>> 12)
-      r ^ (r >>> 7) ^ (r >>> 4)
-    }
     val numTrain = sc.accumulator(0L)
     val numTest = sc.accumulator(0L)
     val secondMoment = sc.accumulator(0.0)
@@ -195,9 +209,11 @@ object GenSynMat extends Settings{
     val syntheticData = rowBlocks.cartesian(colBlocks).map{
       case ((rowBID, rowFactors), (colBID, colFactors)) => {
         val time = System.currentTimeMillis()
+        val rowIndices = rowBlockMapBC.value.zipWithIndex.filter(_._1==rowBID).map(_._2)
+        val colIndices = colBlockMapBC.value.zipWithIndex.filter(_._1==colBID).map(_._2)
         val bid = rowBID*numColBlocks + colBID
-        val numRows = rowFactors.length
-        val numCols = colFactors.length
+        val numRows = rowIndices.length
+        val numCols = colIndices.length
         val seed = hash(bid)
         val random_int = new Random(seed)
         val gaussian = new Random(seed)
@@ -232,13 +248,13 @@ object GenSynMat extends Settings{
         m = 0
         while (m < numRows) {
           val rowFactor = rowFactors(m)
-          val rowIdx = m*numRowBlocks+rowBID
+          val rowIdx = rowIndices(m)
           colIdxSet.clear
           var i = 0
           val nnzRow = nnzTrainRows(m) + nnzTestRows(m)
           while(i < nnzRow) {
             val n = drawColIdx(random_int, colIdxSet, numCols)
-            val colIdx = n*numColBlocks+colBID
+            val colIdx = colIndices(n)
             val value = Vector(rowFactor).dot(Vector(colFactors(n)))
             firstMoment += value
             secondMoment += value*value
@@ -263,20 +279,17 @@ object GenSynMat extends Settings{
             "length: " + testingRecords.length + "\tcountTest " + countTrain)
         (trainingRecords, testingRecords)
       }
-    }.persist(StorageLevel)
+    }.cache
     val TRAINING_DIR = OUTPUT_DIR + "train_" + JOB_NAME + PATH_SEPERATOR
     val TESTING_DIR = OUTPUT_DIR + "test_" + JOB_NAME + PATH_SEPERATOR
     
-    syntheticData.flatMap(_._1).map((NullWritable.get, _))
+    syntheticData.flatMap(_._1.map((NullWritable.get, _)))
       .saveAsSequenceFile(TRAINING_DIR)
-    syntheticData.flatMap(_._2).map((NullWritable.get, _))
+    syntheticData.flatMap(_._2.map((NullWritable.get, _)))
       .saveAsSequenceFile(TESTING_DIR)
-//    syntheticData.flatMap(_._2).map((NullWritable.get, _))
-//      .saveAsHadoopFile[SequenceFileOutputFormat[NullWritable, Record]](TRAINING_DIR)
-    
+      
     val bwLog = new BufferedWriter(new FileWriter(new File(JOB_NAME)))
     bwLog.write(JOB_NAME+"\n")
-    val elpasedTime = (System.currentTimeMillis() - currentTime)*0.001
     println("number of training samples: " + numTrain.value)
     bwLog.write("number of training samples: " + numTrain.value + "\n")
     println("number of testing samples: " + numTest.value)
@@ -285,9 +298,64 @@ object GenSynMat extends Settings{
     println("average first moment: " + firstMoment.value/nnz)
     println("average second moment: " + secondMoment.value/nnz + "\n")
     bwLog.write("average first moment: " + firstMoment.value/nnz + "\n")
-    bwLog.write("average second moment: " + secondMoment.value/nnz)
-    println("generating synthetic matrix finished in " + elpasedTime + "(s)")
-    bwLog.write("generating synthetic matrix finished in " + elpasedTime + "(s)\n")
+    bwLog.write("average second moment: " + secondMoment.value/nnz)  
+    
+    def createCombiner(record: Record) = {
+      val _1 = ArrayBuffer[Int](record.rowIdx)
+      val _2 = ArrayBuffer[Int](record.colIdx)
+      val _3 = ArrayBuffer[Float](record.value)
+      (_1, _2, _3)
+    }
+    def mergeValue(buf: (ArrayBuffer[Int], ArrayBuffer[Int], ArrayBuffer[Float]), 
+      record: Record) = {
+      buf._1 += record.rowIdx
+      buf._2 += record.colIdx
+      buf._3 += record.value
+      buf
+    }
+    var s = 0
+    
+    while (s < numSlices.length) {
+      //generating pre-partitioned sparse matrices
+      println("begin to construct synthetic matrix with block size " + numSlices(s))
+      val (numRowBlocks, numColBlocks) = numSlices(s)
+      val outputBlockSize = numRowBlocks*numColBlocks/numOutputBlocks
+      val rowBlockSize = numRows/numRowBlocks
+      val colBlockSize = numCols/numColBlocks
+      val trainDir = OUTPUT_DIR + "train_mat_" + "br_" + numRowBlocks + 
+        "_bc_" + numColBlocks + "_" + JOB_NAME + PATH_SEPERATOR
+      val part = new HashPartitioner(numRowBlocks*numColBlocks)
+      syntheticData.flatMap(_._1.map(record => {
+        val rowPID = math.min(record.rowIdx/rowBlockSize, numRowBlocks-1)
+        val colPID = math.min(record.colIdx/colBlockSize, numColBlocks-1)
+        (rowPID*numColBlocks + colPID, record)
+      }))
+      .combineByKey[(ArrayBuffer[Int], ArrayBuffer[Int], ArrayBuffer[Float])](
+        createCombiner _, mergeValue _, null, part, false)
+      .map(pair => (pair._1 / outputBlockSize,
+        ((pair._1/numColBlocks, pair._1%numColBlocks), 
+        (pair._2._1.toArray, pair._2._2.toArray, pair._2._3.toArray))))
+      .groupByKey(numOutputBlocks).flatMap(_._2).saveAsObjectFile(trainDir)
+      
+      val testDir = OUTPUT_DIR + "test_mat_" + "br_" + numRowBlocks + 
+        "_bc_" + numColBlocks + "_" + JOB_NAME + PATH_SEPERATOR
+      syntheticData.flatMap(_._2.map(record => {
+        val rowPID = math.min(record.rowIdx/rowBlockSize, numRowBlocks-1)
+        val colPID = math.min(record.colIdx/colBlockSize, numColBlocks-1)
+        (rowPID*numColBlocks + colPID, record)
+      }))
+      .combineByKey[(ArrayBuffer[Int], ArrayBuffer[Int], ArrayBuffer[Float])](
+        createCombiner _, mergeValue _, null, part, false)
+      .map(pair => (pair._1 / outputBlockSize, 
+        ((pair._1/numColBlocks, pair._1%numColBlocks), 
+          (pair._2._1.toArray, pair._2._2.toArray, pair._2._3.toArray))))
+      .groupByKey(numOutputBlocks).flatMap(_._2).saveAsObjectFile(testDir)
+      s += 1
+    }
+    
+    val elpasedTime = (System.currentTimeMillis() - currentTime)*0.001
+    println("Generating synthetic matrix finished in " + elpasedTime + "(s)")
+    bwLog.write("Generating synthetic matrix finished in " + elpasedTime + "(s)\n")
     bwLog.close
     System.exit(0)
   }

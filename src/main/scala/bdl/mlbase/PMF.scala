@@ -537,17 +537,33 @@ object PMF {
     
     if (args.length != 15) {
       println("Usage: PMF <master> <jar_file> <training_files> <testing_files> " +
-                      "<output_dir> <rank> <iterations> <vb> <gamma_r_init>" +
-                      " <gamma_c_init> <blocks> <mean> <scale> <tmp_dir> <interval>")
+        "<output_dir> <rank> <iterations> <vb> <gamma_r_init> " +
+        "<gamma_c_init> <blocks> <mean> <scale> <tmp_dir> <interval>")
       System.exit(1)
     }
-    args.foreach(println(_))
+    
     val (master, jar, trainingPath, testingPath, outputDir, rank, iters, vb,
         gamma_r_init, gamma_c_init, blocks, mean, scale, tmpDir, interval) =
       (args(0), Seq(args(1)), args(2), args(3), args(4), args(5).toInt, args(6).toInt,
-          args(7).toBoolean, args(8).toFloat, args(9).toFloat, args(10).toInt,
+        args(7).toBoolean, args(8).toFloat, args(9).toFloat, args(10).toInt,
           args(11).toFloat, args(12).toFloat, args(13), args(14).toInt)
     
+    println("master: " + args(0))
+    println("jar: " + jar)
+    println("trainingPath: " + trainingPath)
+    println("testingPath: " + testingPath)
+    println("outputDir: " + outputDir)
+    println("rank: " + rank)
+    println("iters: " + iters)
+    println("vb: " + vb)
+    println("gamma_r: " + gamma_r_init)
+    println("gamma_c: " + gamma_c_init)
+    println("num of blocks: " + blocks)
+    println("mean: " + mean)
+    println("scale: " + scale)
+    println("tmp dir: " + tmpDir)
+    println("interval: " + interval)
+        
 //    val master = "local[2]"
 //    val trainingPath = "input/EachMovie-GL/1.train"
 //    val testingPath = "input/EachMovie-GL/1.validate"
@@ -569,10 +585,10 @@ object PMF {
     val logPath = outputDir + "/" + job + "_rank_" + rank + "_iter_" + 
       iters + "_blocks_" + blocks + "_gamma_r_" + gamma_r_init +
       "_gamma_c_" + gamma_c_init + "_scale_" + scale + ".txt"
-    System.setProperty("spark.serializer", 
-        "org.apache.spark.serializer.KryoSerializer")
-    System.setProperty("spark.kryo.registrator", classOf[PMFRegister].getName)
-    System.setProperty("spark.kryo.referenceTracking", "false")
+//    System.setProperty("spark.serializer", 
+//        "org.apache.spark.serializer.KryoSerializer")
+//    System.setProperty("spark.kryo.registrator", classOf[PMFRegister].getName)
+//    System.setProperty("spark.kryo.referenceTracking", "false")
 //    System.setProperty("spark.kryoserializer.buffer.mb", "128")
     System.setProperty("spark.local.dir", tmpDir)
 //    System.setProperty("spark.ui.port", "44717")

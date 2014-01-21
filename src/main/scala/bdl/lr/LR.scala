@@ -214,7 +214,7 @@ object LR extends Settings {
       "_gi_" + gamma_init + "_li_" + lambda_init + "_t_" + featureThre
     val logPath = outputDir + jobName + ".txt"
     
-    val storageLevel = storage.StorageLevel.MEMORY_ONLY
+    val storageLevel = storage.StorageLevel.MEMORY_AND_DISK_SER
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
     

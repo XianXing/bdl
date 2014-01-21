@@ -18,24 +18,26 @@ import org.apache.hadoop.io.NullWritable
 // random row/col subsampling
 object PMF extends Settings {
   
-  val syn = false
-  val trainingPath = 
-    if (syn) "output/train_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
+  val seq = true
+  val trainingDir = 
+    if (seq) {
+      "output/train_mat_br_4_bc_4_Syn_M_5000_N_5000_K_10_spa_0.1_tr_0.9_lam_100.0" 
+    }
     else "input/ml-1m/mf_train"
-  val testingPath = 
-    if (syn) "output/test_Syn_M_1000_N_1000_K_20_spa_0.01_tr_0.9_ga_1.0_lam_10.0" 
+  val testingDir = 
+    if (seq) "output/test_Syn_M_5000_N_5000_K_10_spa_0.1_tr_0.9_lam_100.0" 
     else "input/ml-1m/mf_test"
   val outputDir = "output/"
   val numCores = 1
   val numRowBlocks = 2
-  val numColBlocks = 1
+  val numColBlocks = 2
   val gamma_r_init = 10f
   val gamma_c_init = 10f
   val gamma_x_init = 1f
-  val lambda_r = 1f
+  val lambda_r = 1.001f
   val lambda_c = 1f
-  val maxOuterIter = 5
-  val maxInnerIter = 10
+  val maxOuterIter = 10
+  val maxInnerIter = 1
   val numFactors = 20
   val l1 = false
   val max_norm = true
@@ -43,25 +45,22 @@ object PMF extends Settings {
   val vb = true
   val admm = true
   //for each movie, numRows = 1621, numCols = 55423, mean: 4.037181f
-  val numRows = if (syn) 50000 else 6041
-  val numCols = if (syn) 50000 else 3953
-  val mean = if (syn) 0f else 3.7668543f
+  val numRows = if (seq) 5000 else 6041
+  val numCols = if (seq) 5000 else 3953
+  val mean = if (seq) 0f else 3.7668543f
   val scale = 1
-  val numReducers = 5*numCores
   val numSlices = numRowBlocks*numColBlocks
   val admm_r = admm && numColBlocks > 1
   val admm_c = admm && numRowBlocks > 1
   val max_norm_r = max_norm && numColBlocks > 1
   val max_norm_c = max_norm && numRowBlocks > 1
   val iso = false
-  val updateGammaR = vb
-  val updateGammaC = vb
+  val updateGammaR = false
+  val updateGammaC = false
   val mode = "local[" + numCores + "]"
   val jars = Seq("sparkproject.jar")
-  val memory = "1g"
-  val tmpDir = "tmp"
   val multicore = numCores > numSlices
-  val interval = 2
+  val interval = 1
   
   def toGlobal(factors: Array[Array[Float]], map: Array[Int]) 
     : Array[(Int, Array[Float])] = {
@@ -126,7 +125,7 @@ object PMF extends Settings {
   }
   
   def updateGlobalPriors(stats: RDD[(Int, (Array[Float], Array[Float], List[Int]))], 
-      l1: Boolean, max_norm: Boolean, lambda: Float, part: HashPartitioner) = {
+      l1: Boolean, max_norm: Boolean, lambda: Float) = {
     
     def agregate(p1: (Array[Float], Array[Float], List[Int]), 
         p2: (Array[Float], Array[Float], List[Int])) = {
@@ -141,7 +140,7 @@ object PMF extends Settings {
       }
     }
     
-    stats.reduceByKey(part, (p1, p2) => agregate(p1, p2)).mapValues{
+    stats.reduceByKey((p1, p2) => agregate(p1, p2)).mapValues{
       // update the global parameters
       case(weightedSum, gammaSum, pids) => {
         if (pids.length == 1) (Array.ofDim[Float](weightedSum.length), pids)
@@ -169,7 +168,6 @@ object PMF extends Settings {
     options.addOption(OUTPUT_OPTION, true, "output path/directory")
     options.addOption(MEAN_OPTION, true, "mean option for input values")
     options.addOption(SCALE_OPTION, true, "scale option for input values")
-    options.addOption(NUM_CORES_OPTION, true, "number of cores to use")
     options.addOption(NUM_REDUCERS_OPTION, true, "number of reducers to use")
     options.addOption(NUM_SLICES_OPTION, true, "number of slices of the data")
     options.addOption(OUTER_ITERATION_OPTION, true, "max # of outer iterations")
@@ -195,27 +193,28 @@ object PMF extends Settings {
     options.addOption(L1_REGULARIZATION, false, "use l1 regularization")
     options.addOption(NUM_ROWS_OPTION, true, "number of rows")
     options.addOption(NUM_COLS_OPTION, true, "number of cols")
+    options.addOption(NUM_CORES_OPTION, true, "number of cores to use")
     options.addOption(MULTICORE_OPTION, false, 
         "multicore computing on each machine")
     options.addOption(MAX_NORM_OPTION, false, "use max-norm regilarization")
     options.addOption(INTERVAL_OPTION, true, "interval to calculate testing RMSE")
-    options.addOption(SYNTHETIC_DATA_OPTION, false, "using syn data")
+    options.addOption(SEQUENCE_FILE_OPTION, false, "input is sequence file")
     
-    val parser = new GnuParser();
-    val formatter = new HelpFormatter();
-    val line = parser.parse(options, args);
+    val parser = new GnuParser()
+    val formatter = new HelpFormatter()
+    val line = parser.parse(options, args)
     if (line.hasOption(HELP) || args.length == 0) {
-      formatter.printHelp("Help", options);
-      System.exit(0);
+      formatter.printHelp("Help", options)
+      System.exit(0)
     }
-    assert(line.hasOption(RUNNING_MODE_OPTION), "running mode not specified")
+    assert(line.hasOption(RUNNING_MODE_OPTION), "spark cluster mode not specified")
     assert(line.hasOption(TRAINING_OPTION), "training data path not specified")
     assert(line.hasOption(TESTING_OPTION), "testing data path not specified")
-    assert(line.hasOption(JAR_OPTION), "jar file path not specified")
+    assert(line.hasOption(JAR_OPTION), "running jar file path not specified")
     
     val mode = line.getOptionValue(RUNNING_MODE_OPTION)
-    val trainingPath = line.getOptionValue(TRAINING_OPTION)
-    val testingPath = line.getOptionValue(TESTING_OPTION)
+    val trainingDir = line.getOptionValue(TRAINING_OPTION)
+    val testingDir = line.getOptionValue(TESTING_OPTION)
     val jars = Seq(line.getOptionValue(JAR_OPTION))
     val outputDir = 
       if (line.hasOption(OUTPUT_OPTION))
@@ -241,9 +240,9 @@ object PMF extends Settings {
       if (line.hasOption(NUM_COLS_OPTION))
         line.getOptionValue(NUM_COLS_OPTION).toInt
       else 5000000
-    val numReducers =
-      if (line.hasOption(NUM_REDUCERS_OPTION))
-        line.getOptionValue(NUM_REDUCERS_OPTION).toInt
+    val numCores = 
+      if (line.hasOption(NUM_CORES_OPTION))
+        line.getOptionValue(NUM_CORES_OPTION).toInt
       else 8
     val maxOuterIter =
       if (line.hasOption(OUTER_ITERATION_OPTION))
@@ -265,11 +264,6 @@ object PMF extends Settings {
         line.getOptionValue(NUM_COL_BLOCKS_OPTION).toInt
       else 1
     val admm_r = admm && numColBlocks>1
-    val NUM_PARTITIONS = numRowBlocks*numColBlocks
-    val numCores =
-      if (line.hasOption(NUM_CORES_OPTION))
-        line.getOptionValue(NUM_CORES_OPTION).toInt
-      else NUM_PARTITIONS
     val updateGammaR = line.hasOption(UPDATE_GAMMA_R_OPTION)
     val updateGammaC = line.hasOption(UPDATE_GAMMA_C_OPTION)
     val gamma_r_init = 
@@ -302,29 +296,39 @@ object PMF extends Settings {
             numRowBlocks*numColBlocks)
       else numRowBlocks*numColBlocks
     val iso = line.hasOption(ISO_OPTION)
-    val tmpDir = if (line.hasOption(TMP_DIR_OPTION))
-      line.getOptionValue(TMP_DIR_OPTION)
-      else "tmp"
-    val memory = if (line.hasOption(MEMORY_OPTION))
-      line.getOptionValue(MEMORY_OPTION)
-      else "512m"
     val l1 = line.hasOption(L1_REGULARIZATION)
     val max_norm = line.hasOption(MAX_NORM_OPTION)
-    val multicore = line.hasOption(MULTICORE_OPTION)
+    val multicore = line.hasOption(MULTICORE_OPTION) || 
+        (line.hasOption(NUM_CORES_OPTION) && numCores > numSlices)
     val interval = 
       if (line.hasOption(INTERVAL_OPTION))
         line.getOptionValue(INTERVAL_OPTION).toInt
       else 1
-    val syn = line.hasOption(SYNTHETIC_DATA_OPTION)
+    val seq = line.hasOption(SEQUENCE_FILE_OPTION)
+    if (line.hasOption(TMP_DIR_OPTION)) {
+      System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
+    }
+    if (line.hasOption(MEMORY_OPTION)) {
+      System.setProperty("spark.executor.memory", line.getOptionValue(MEMORY_OPTION))
+    }
+    if (line.hasOption(NUM_REDUCERS_OPTION) || line.hasOption(NUM_CORES_OPTION)) {
+      if (line.hasOption(NUM_REDUCERS_OPTION)) {
+        System.setProperty("spark.default.parallelism", 
+          line.getOptionValue(NUM_REDUCERS_OPTION))
+      }
+      else {
+        System.setProperty("spark.default.parallelism", 
+          line.getOptionValue(NUM_CORES_OPTION))
+      }
+    }
     
     var jobName = "DIST_MF"
     if (vb) jobName += "_VB" else jobName += "_MAP"
     if (admm) jobName += "_ADMM" 
-    if (multicore) jobName += "_multicore"
+    if (multicore) jobName += "_mc"
     if (l1) jobName += "_l1"
     if (max_norm) jobName += "_max_norm"
     if (iso) jobName += "_iso"
-    if (syn) jobName += "_M_" + numRows + "_N_" + numCols
     jobName +=  "_oi_" + maxOuterIter + "_ii_" + maxInnerIter + "_K_" + numFactors +
       "_rb_" + numRowBlocks + "_cb_" + numColBlocks +
       "_ugr_" + updateGammaR + "_ugc_" + updateGammaC + 
@@ -332,51 +336,61 @@ object PMF extends Settings {
       "_lr_" + lambda_r + "_lc_" + lambda_c
     val logPath = outputDir + jobName + ".txt"
     
-    System.setProperty("spark.executor.memory", memory)
-    System.setProperty("spark.local.dir", tmpDir)
-    System.setProperty("spark.default.parallelism", numReducers.toString)
-    System.setProperty("spark.storage.memoryFraction", "0.5")
+//    System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.locality.wait", "10000")
     System.setProperty("spark.worker.timeout", "3600")
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
     System.setProperty("spark.akka.timeout", "60")
     System.setProperty("spark.akka.askTimeout", "60")
-//    System.setProperty("spark.serializer", 
-//        "org.apache.spark.serializer.KryoSerializer")
-//    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
+    System.setProperty("spark.serializer", 
+        "org.apache.spark.serializer.KryoSerializer")
+    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
 //    System.setProperty("spark.kryoserializer.buffer.mb", "64")
-//    System.setProperty("spark.kryo.referenceTracking", "false")
-//  System.setProperty("spark.mesos.coarse", "true")
+    System.setProperty("spark.kryo.referenceTracking", "false")
+//    System.setProperty("spark.mesos.coarse", "true")
 //    System.setProperty("spark.cores.max", numCores.toString)
     
     val storageLevel = storage.StorageLevel.MEMORY_ONLY
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
     
-    val rowPartitionMap = sc.broadcast(getPartitionMap(numRows, numRowBlocks, bwLog))
-    val colPartitionMap = sc.broadcast(getPartitionMap(numCols, numColBlocks, bwLog))
+    val seedRow = hash(numRows)
+    val rowBlockMap = sc.broadcast(getPartitionMap(numRows, numRowBlocks, seedRow))
+    val seedCol = hash(numCols+numRows)
+    val colBlockMap = sc.broadcast(getPartitionMap(numCols, numColBlocks, seedCol))
     val dataPartitioner = new HashPartitioner(numSlices)
-    val paraPartitioner = new HashPartitioner(numReducers)
     
     // read in the sparse matrix:
-    val trainingTuples =
-      if (syn || trainingPath.toLowerCase.contains("ml")) 
-        sc.sequenceFile[NullWritable, Record](trainingPath)
+    val trainingData = 
+      if (seq) {
+        val rawTrainingData =
+          sc.objectFile[((Int, Int), 
+            (Array[Int], Array[Int], Array[Float]))](trainingDir)
+        getPartitionedData(rawTrainingData, numRowBlocks, numColBlocks, dataPartitioner)
+      }
+      else if (trainingDir.toLowerCase().contains("ml") || 
+          trainingDir.toLowerCase().contains("syn")) {
+        val tuples = sc.sequenceFile[NullWritable, Record](trainingDir, numSlices)
           .map(pair => 
             new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
-      else if (trainingPath.toLowerCase.contains("eachmovie"))
-        sc.textFile(trainingPath, numSlices)
-          .map(line => parseLine(line, " ", mean, scale))
-      else 
-        sc.textFile(trainingPath, numSlices)
+        getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
+          dataPartitioner)
+      }
+      else{
+        val tuples = sc.textFile(trainingDir, numSlices)
           .flatMap(line => parseLine(line, mean, scale))
-        
-    val trainingData = getPartitionedData(trainingTuples, numColBlocks, 
-        rowPartitionMap, colPartitionMap, dataPartitioner).persist(storageLevel)
+        getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
+          dataPartitioner)
+      }
+    
+    //note that the ccdpp code treats the trainingData's value array as residuals and
+    //modifies it in each iteration, in order for such side effect to work, 
+    //we can only use the unserialized cache here
+    trainingData.cache
     
     val samplesPerBlock = trainingData.map(pair => pair._2.col_idx.length).collect
-    val rowsPerBlock = trainingData.map(pair => pair._2.row_ptr.length).collect
-    val colsPerBlock = trainingData.map(pair => pair._2.col_ptr.length).collect
+    val rowsPerBlock = trainingData.map(pair => pair._2.rowMap.length).collect
+    val colsPerBlock = trainingData.map(pair => pair._2.colMap.length).collect
     val numTrainingSamples = samplesPerBlock.sum
     var b = 0
     println("samples per block:")
@@ -399,18 +413,27 @@ object PMF extends Settings {
       b += 1
     }
     println
-    val testingTuples = 
-      if (syn || testingPath.toLowerCase.contains("ml"))
-        sc.sequenceFile[NullWritable, Record](testingPath, numSlices).map(pair =>
-          new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
-      else if (testingPath.toLowerCase.contains("eachmovie"))
-        sc.textFile(testingPath, numSlices)
-          .map(line => parseLine(line, " ", mean, scale))
-      else 
-        sc.textFile(testingPath, numSlices)
-          .flatMap(line => parseLine(line, mean, scale))  
-    val testingData = getPartitionedData(testingTuples, numColBlocks, 
-        rowPartitionMap, colPartitionMap, dataPartitioner)
+    val testingData = 
+      if (seq) {
+        val rawTestingData =
+          sc.objectFile[((Int, Int), 
+            (Array[Int], Array[Int], Array[Float]))](testingDir)
+        getPartitionedData(rawTestingData, numRowBlocks, numColBlocks, dataPartitioner)
+      }
+      else if (testingDir.toLowerCase().contains("ml") || 
+          testingDir.toLowerCase().contains("syn")) {
+        val tuples = sc.sequenceFile[NullWritable, Record](testingDir, numSlices)
+          .map(pair => 
+            new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
+        getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
+          dataPartitioner)
+      }
+      else{
+        val tuples = sc.textFile(testingDir, numSlices)
+          .flatMap(line => parseLine(line, mean, scale))
+        getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
+          dataPartitioner)
+      }
     testingData.persist(storageLevel)
     val numTestingSamples = testingData.map(pair => pair._2.col_idx.length).sum
     
@@ -427,14 +450,14 @@ object PMF extends Settings {
     bwLog.write("Mean: " + mean + "\n")
     bwLog.write("Scale: " + scale + "\n")
     
-    bwLog.write("Preprocesing data finished in  " 
+    bwLog.write("Preprocesing data finished in " 
         + (System.currentTimeMillis()-currentTime)*0.001 + "(s)\n")
     println("Preprocesing data finished in " 
         + (System.currentTimeMillis()-currentTime)*0.001 + "(s)")
     
     var iterTime = System.currentTimeMillis()
     var iter = 0
-    val thre = 0.001f
+    val thre = 0.0001f
     var localOutputs = trainingData.mapValues(data => {
       val gamma_r = if (vb) 1f else 1f
       val gamma_c = if (vb) 1f else 1f
@@ -463,19 +486,21 @@ object PMF extends Settings {
     
     while (iter < maxOuterIter) {
       val globalRowFactors = 
-        if (numColBlocks>1 && !iso)
+        if (numColBlocks>1 && !iso) {
           updateGlobalPriors(localModels.flatMap{
             case(pid, model) =>
             timesGamma(model.getRowStats(admm_r), model.gamma_r, model.rowMap, pid)
-          }, l1, max_norm, lambda_r, paraPartitioner)
+          }, l1, max_norm, lambda_r)
           .groupByKey(dataPartitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
+          //the global factors need to be sorted by
+        }
         else rowPrior
       val globalColFactors = 
         if (numRowBlocks>1 && !iso)
           updateGlobalPriors(localModels.flatMap{
             case(pid, model) =>
             timesGamma(model.getColStats(admm_c), model.gamma_c, model.colMap, pid)
-          }, l1, max_norm, lambda_c, paraPartitioner)
+          }, l1, max_norm, lambda_c)
           .groupByKey(dataPartitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
         else colPrior
       
@@ -498,7 +523,7 @@ object PMF extends Settings {
       
       val globalModel = 
         if (numRowBlocks>1 && numColBlocks>1) priors
-        else
+        else {
           localModels.join(priors).mapValues{
             case(model, prior) => Pair(
               if (numColBlocks == 1) toGlobal(model.rowFactor, model.rowMap)
@@ -507,6 +532,7 @@ object PMF extends Settings {
               else prior._2
             )
           }
+        }
       
       val testingRMSE_global = 
         if (!iso && (iter % interval == 0 || iter+1 == maxOuterIter)) {
@@ -564,15 +590,14 @@ object PMF extends Settings {
             model.ccdpp(data, innerIter, 1, thre, multicore, vb, admm_r, admm_c,
               updateGammaR, updateGammaC, rowPriors, colPirors)
           }
-        }
-        localOutputs.persist(storageLevel)
+        }.persist(storageLevel)
         localModels = localOutputs.mapValues(_._1)
         localInfo = localOutputs.mapValues{
           case(model, iter, rmse, rowSD, colSD) => (iter, rmse, rowSD, colSD)
         }.collect
-        priors.unpersist(false)
+        priors.unpersist(true)
         println("Let's remove RDD: " + rddId)
-        sc.getPersistentRDDs(rddId).unpersist(false)
+        sc.getPersistentRDDs(rddId).unpersist(true)
       }
     }
     if (false) {

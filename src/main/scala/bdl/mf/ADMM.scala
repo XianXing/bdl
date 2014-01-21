@@ -8,13 +8,14 @@ object ADMM{
     val numFactors = rowLags.length
     val numRows = rowPriors.length
     
-    if (multi_thread)
-    for (r <- (0 until numRows).par) {
-      var k = 0
-      while (k < numFactors) {
-        rowLags(k)(r) += rowFactors(k)(r) - rowPriors(r)(k)
-        rowPriors(r)(k) -= rowLags(k)(r)
-        k += 1
+    if (multi_thread) {
+      for (r <- (0 until numRows).par) {
+        var k = 0
+        while (k < numFactors) {
+          rowLags(k)(r) += rowFactors(k)(r) - rowPriors(r)(k)
+          rowPriors(r)(k) -= rowLags(k)(r)
+          k += 1
+        }
       }
     }
     else {

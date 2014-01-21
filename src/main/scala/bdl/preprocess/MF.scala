@@ -1,17 +1,17 @@
 package preprocess
 
-import utilities._
+import java.io._
+import java.text.DecimalFormat
+
+import scala.collection.mutable.{HashMap, HashSet, ArrayBuffer}
+import scala.io._
+import scala.util.Random
 
 import org.apache.spark.{storage, Partitioner, SparkContext, rdd, broadcast}
 import org.apache.spark.SparkContext._
 import org.apache.hadoop.io.NullWritable
 
-import java.io._
-import java.text.DecimalFormat
-import scala.collection.mutable.{HashMap, HashSet}
-import scala.collection.JavaConversions._
-import scala.io._
-import scala.util.Random
+import utilities._
 
 //preprocess for the matrix factorization problems
 object MF {
@@ -55,10 +55,10 @@ object MF {
   def getPartitionID(record: Record, numRowBlocks: Int, numColBlocks: Int) 
     : Int = (record.rowIdx%numRowBlocks)*numColBlocks + record.colIdx%numColBlocks
     
-  def getPartitionMap(numRows: Int, numRowBlocks: Int, bw: BufferedWriter) 
+  def getPartitionMap(numRows: Int, numRowBlocks: Int, seed: Long) 
     : Array[Byte] = {
     val partitionMap = Array.ofDim[Byte](numRows)
-    val random = new Random
+    val random = new Random(seed)
     val stats = Array.ofDim[Int](numRowBlocks)
     var r = 0
     while (r < numRows) {
@@ -69,30 +69,57 @@ object MF {
     }
     var i = 0; while (i<stats.length) { 
       println("block " + i + " has " + stats(i) + " elements")
-      bw.write("block " + i + " has " + stats(i) + " elements\n")
       i += 1
     }
     partitionMap
   }
   
-  def getPartitionedData(records: rdd.RDD[Record], numRowBlocks: Int, 
-      numColBlocks: Int, partitioner: Partitioner)
-    : rdd.RDD[(Int, SparseMatrix)] = {
-    records.map{ record => (
-        (record.rowIdx%numRowBlocks)*numColBlocks + record.colIdx%numColBlocks, record)
-    }.groupByKey(partitioner).mapValues(seq => SparseMatrix(seq.toArray))
-  }
-  
   def getPartitionedData(records: rdd.RDD[Record], numColBlocks: Int,
       rowPartitionMap: broadcast.Broadcast[Array[Byte]], 
       colPartitionMap: broadcast.Broadcast[Array[Byte]],
-      partitioner: Partitioner) 
-   : rdd.RDD[(Int, SparseMatrix)] = {
+      partitioner: Partitioner) : rdd.RDD[(Int, SparseMatrix)] = {
+     
+    //on the choice between ArrayBuffer and ListBuffer:
+    //altough ArrayBuffer consumes more memory in this case, it has lower cache-miss
+    //rate, which is deseriable and important
+    def createCombiner(record: Record) = ArrayBuffer[Record](record)
+    def mergeValue(buf: ArrayBuffer[Record], record: Record) = buf += record
+    
     records.mapPartitions(_.map(record => {
       val rowPID = rowPartitionMap.value(record.rowIdx)
       val colPID = colPartitionMap.value(record.colIdx)
       (rowPID*numColBlocks + colPID, record)
-    })).groupByKey(partitioner).mapValues(seq => SparseMatrix(seq.toArray))
+    }))
+    .combineByKey[ArrayBuffer[Record]](
+      createCombiner _, mergeValue _, null, partitioner, mapSideCombine=false)
+    .mapValues(buf => SparseMatrix(buf.toArray))
+  }
+  
+  def getPartitionedData(records: rdd.RDD[Record], numColBlocks: Int,
+      rowPartitionMapBC: broadcast.Broadcast[Array[Byte]], 
+      colPartitionMapBC: broadcast.Broadcast[Array[Byte]], numReducers: Int)
+    : rdd.RDD[(Int, SparseMatrix)] = {
+    records.mapPartitions(_.map(record => {
+      val rowPartitionMap = rowPartitionMapBC.value
+      val colPartitionMap = colPartitionMapBC.value
+      val rowPID = rowPartitionMap(record.rowIdx)
+      val colPID = colPartitionMap(record.colIdx)
+      (rowPID*numColBlocks + colPID, record)
+    })).groupByKey(numReducers).mapValues(buf => SparseMatrix(buf.toArray))
+  }
+  
+  def getPartitionedData(
+      data: rdd.RDD[((Int, Int), (Array[Int], Array[Int], Array[Float]))],
+      numRowBlocks: Int, numColBlocks: Int, partitioner: Partitioner) = {
+    val (maxRowID, maxColID) = data.map(_._1)
+      .reduce((p1, p2) => (math.max(p1._1, p2._1), math.max(p1._2, p2._2)))
+    val rowBlockSize = (maxRowID+1)/numRowBlocks
+    val colBlockSize = (maxColID+1)/numColBlocks
+    data.map(pair=>{
+      val rowBID = math.min(pair._1._1/rowBlockSize, numRowBlocks-1)
+      val colBID = math.min(pair._1._2/rowBlockSize, numColBlocks-1)
+      (rowBID*numColBlocks + colBID, pair._2)
+    }).groupByKey(partitioner).mapValues(seq => SparseMatrix(seq.toArray))
   }
   
   def preprocessNetflix(
@@ -265,45 +292,6 @@ object MF {
         math.max(tuple1._2, tuple2._2), tuple1._3+tuple2._3, tuple1._4+tuple2._4))
     val mean = sum/nnz
     println("numRows: "+(numRows+1) + "\tnumCols: " + (numCols+1) + "\tmean: " + mean)
-//    data.map(record => (NullWritable.get, 
-//        new Record(record.rowIdx, record.colIdx, record.value-mean)))
     data.map(record => (NullWritable.get, record)).saveAsSequenceFile(outputDir)
-  }
-  
-  def main(args: Array[String]) {
-    
-    val master = "local[2]"
-    val jar = Seq("sparkproject.jar")
-    val jobName = "preprocess_TF"
-//    val inputDir = "../datasets/MovieLens/ml-1m/ra.train"
-    val inputDir = "../datasets/MovieLens/ml-1m/ra.test"
-    val outputDir = "input/ml-1m/mf_test"
-    val sc = new SparkContext(master, jobName, System.getenv("SPARK_HOME"), jar)
-    preprocessMovieLens(sc, inputDir, outputDir)
-    
-//    val inputDir = "input/EachMovie-GL"
-//    val trainDir = "output/train"
-//    val testDir = "output/test"
-//    val ratio = 0.98
-//    val sep = " "
-//    val (master, jar, inputDir, trainDir, testDir, ratio)
-//      = (args(0), Seq(args(1)), args(2), args(3), args(4), args(5).toDouble)
-//    val sep = if (args.length == 7) args(6) else "\t"
-//    
-//    val STORAGE_LEVEL = storage.StorageLevel.MEMORY_AND_DISK_SER
-//    val sc = new SparkContext(master, "prep wiki", System.getenv("SPARK_HOME"), jar)
-//    val all = sc.textFile(inputDir).map(line => {
-//      val tokens = line.trim.split(sep)
-//      assert(tokens.length == 3)
-//      (Random.nextDouble < ratio, 
-//      (tokens(0).toInt, tokens(1).toInt, tokens(2).toFloat))
-//    }).persist(STORAGE_LEVEL)
-//    val (sum, count) = all.map(pair => (pair._2._3.toDouble, 1L))
-//      .reduce((p1, p2) => (p1._1+p2._1, p1._2+p2._2))
-//    println("mean is: " + sum/count)
-//    all.filter(_._1).map(_._2).saveAsObjectFile(trainDir)
-//    println("preprocessed training data stored at " + trainDir)
-//    all.filter(!_._1).map(_._2).saveAsObjectFile(testDir)
-//    println("preprocessed testing data stored at " + testDir)
   }
 }
