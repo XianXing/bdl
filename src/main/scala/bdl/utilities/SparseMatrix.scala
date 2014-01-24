@@ -388,7 +388,6 @@ object SparseMatrix {
       n += 1
     }
     rowSet.clear
-    rowMap.clear
     p = 0
     while (p < numRows) { 
       row_ptr(p+1) += row_ptr(p)
@@ -412,6 +411,7 @@ object SparseMatrix {
       }
       n += 1
     }
+    rowMap.clear
     p = numRows
     while (p > 0) {
       row_ptr(p) = row_ptr(p-1)

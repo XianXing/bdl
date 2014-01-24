@@ -152,12 +152,6 @@ object LR extends Settings {
       if (line.hasOption(LAMBDA_INIT_OPTION))
         line.getOptionValue(LAMBDA_INIT_OPTION).toFloat
       else 0.001f
-    val tmpDir = if (line.hasOption(TMP_DIR_OPTION))
-      line.getOptionValue(TMP_DIR_OPTION)
-      else "tmp"
-    val memory = if (line.hasOption(MEMORY_OPTION))
-      line.getOptionValue(MEMORY_OPTION)
-      else "512m"
     val l1 = line.hasOption(L1_REGULARIZATION)
     val isBinary = line.hasOption(BINARY_FEATURES_OPTION)
     val isSeq = line.hasOption(SEQUENCE_FILE_OPTION)
@@ -176,10 +170,22 @@ object LR extends Settings {
       if (line.hasOption(INTERVAL_OPTION))
         line.getOptionValue(INTERVAL_OPTION).toInt
       else 1
-    
-    System.setProperty("spark.local.dir", tmpDir)
-    System.setProperty("spark.executor.memory", memory)
-    System.setProperty("spark.default.parallelism", numReducers.toString)
+    if (line.hasOption(TMP_DIR_OPTION)) {
+      System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
+    }
+    if (line.hasOption(MEMORY_OPTION)) {
+      System.setProperty("spark.executor.memory", line.getOptionValue(MEMORY_OPTION))
+    }
+    if (line.hasOption(NUM_REDUCERS_OPTION) || line.hasOption(NUM_CORES_OPTION)) {
+      if (line.hasOption(NUM_REDUCERS_OPTION)) {
+        System.setProperty("spark.default.parallelism", 
+          line.getOptionValue(NUM_REDUCERS_OPTION))
+      }
+      else {
+        System.setProperty("spark.default.parallelism", 
+          line.getOptionValue(NUM_CORES_OPTION))
+      }
+    }
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
 //    System.setProperty("spark.speculation", "true")

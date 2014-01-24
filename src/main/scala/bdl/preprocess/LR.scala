@@ -60,7 +60,7 @@ object LR {
     var i = 1
     while (i < parts.length) {
       val token = parts(i).split(":")
-      key(i) = token(0).toInt+1
+      key(i) = token(0).toInt+1 //+1 because of the offset (bias)
       if (!binary && token.length>1) value(i) = token(1).toFloat
       i+=1
     }
