@@ -237,7 +237,7 @@ object SparseMatrix {
       System.arraycopy(_2, 0, col_idx, count, sizes(l))
       System.arraycopy(_3, 0, value_r, count, sizes(l))
       count += sizes(l)
-      //release the memory now
+      //release the memory now for garbage collection
       array(l) = null
       l += 1
     }
@@ -245,9 +245,7 @@ object SparseMatrix {
   }
   
   def apply(row_idx: Array[Int], col_idx: Array[Int], value_r: Array[Float]) = {
-        
     val nnz = row_idx.length
-    val value_c = new Array[Float](nnz)
     val rowSet = new HashSet[Int]; val colSet = new HashSet[Int]
     var maxRowIdx = 0
     var maxColIdx = 0
@@ -263,15 +261,16 @@ object SparseMatrix {
     val numCols = colSet.size
     println("numRows: " + numRows + " maxRowIdx: " + maxRowIdx)
     println("numCols: " + numCols + " maxColIdx: " + maxColIdx)
-    val row_ptr = Array.ofDim[Int](numRows+1)
-    val col_ptr = Array.ofDim[Int](numCols+1)
+    val row_ptr = new Array[Int](numRows+1)
+    val col_ptr = new Array[Int](numCols+1)
     val rowMap = new HashMap[Int, Int]
     val colMap = new HashMap[Int, Int]
     //need them to be sorted for an easy reverse operation (see Model.toLocal function)
     val rowArray = rowSet.toArray.sorted; val colArray = colSet.toArray.sorted
     var r = 0; while(r<numRows) {rowMap.put(rowArray(r), r); r+=1}
     var c = 0; while(c<numCols) {colMap.put(colArray(c), c); c+=1}
-    
+    rowSet.clear
+    colSet.clear
     i = 0
     while (i < nnz) {
       row_idx(i) = rowMap.getOrElse(row_idx(i), -1)
@@ -280,7 +279,8 @@ object SparseMatrix {
       col_ptr(col_idx(i)+1) += 1
       i += 1
     }
-    
+    rowMap.clear
+    colMap.clear
     r = 1; while (r <= numRows) { row_ptr(r) += row_ptr(r-1); r += 1}
     c = 1; while (c <= numCols) { col_ptr(c) += col_ptr(c-1); c += 1}
     
@@ -324,6 +324,7 @@ object SparseMatrix {
     quickSort(0, nnz-1)
     
     // Transpose CRS into CCS matrix
+    val value_c = new Array[Float](nnz)
     r = 0
     while (r < numRows) {
       i = row_ptr(r)
@@ -386,6 +387,8 @@ object SparseMatrix {
       }
       n += 1
     }
+    rowSet.clear
+    rowMap.clear
     p = 0
     while (p < numRows) { 
       row_ptr(p+1) += row_ptr(p)

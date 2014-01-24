@@ -342,11 +342,11 @@ object PMF extends Settings {
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
     System.setProperty("spark.akka.timeout", "60")
     System.setProperty("spark.akka.askTimeout", "60")
-    System.setProperty("spark.serializer", 
-        "org.apache.spark.serializer.KryoSerializer")
-    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
+//    System.setProperty("spark.serializer", 
+//        "org.apache.spark.serializer.KryoSerializer")
+//    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
 //    System.setProperty("spark.kryoserializer.buffer.mb", "64")
-    System.setProperty("spark.kryo.referenceTracking", "false")
+//    System.setProperty("spark.kryo.referenceTracking", "false")
 //    System.setProperty("spark.mesos.coarse", "true")
 //    System.setProperty("spark.cores.max", numCores.toString)
     
@@ -355,9 +355,13 @@ object PMF extends Settings {
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
     
     val seedRow = hash(numRows)
-    val rowBlockMap = sc.broadcast(getPartitionMap(numRows, numRowBlocks, seedRow))
+    val rowBlockMap = 
+      if (!seq) sc.broadcast(getPartitionMap(numRows, numRowBlocks, seedRow))
+      else null
     val seedCol = hash(numCols+numRows)
-    val colBlockMap = sc.broadcast(getPartitionMap(numCols, numColBlocks, seedCol))
+    val colBlockMap = 
+      if(!seq) sc.broadcast(getPartitionMap(numCols, numColBlocks, seedCol))
+      else null
     val dataPartitioner = new HashPartitioner(numSlices)
     
     // read in the sparse matrix:

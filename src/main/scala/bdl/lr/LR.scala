@@ -254,7 +254,7 @@ object LR extends Settings {
       }
     val trainingData = rawTrainingData.groupByKey(dataPartitioner)
        .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
-       .persist(storageLevel)
+       .cache
     val splitsStats = trainingData.mapValues{
       case(responses, features) => (responses.length, features.rowMap.length)
     }.collect
