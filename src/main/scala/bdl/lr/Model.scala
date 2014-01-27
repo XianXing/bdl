@@ -107,6 +107,21 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     pred
   }
   
+  def getLLH(responses: Array[Boolean], features: SparseMatrix) = {
+    val numData = features.numCols
+    val wtx = new Array[Float](numData)
+    Model.getWTX(features, para, wtx)
+    var n = 0
+    var llh = 0.0
+    while (n < numData) {
+      val ywtx = if (responses(n)) wtx(n) else -wtx(n)
+      if (ywtx > -10) llh += -math.log(1 + math.exp(-ywtx))
+      else llh += ywtx
+      n += 1
+    }
+    llh
+  }
+  
   def updateADMM(globalPara: Array[Float]) = {
     //update the unscaled Lagrangian multipilers
     var p = 0
@@ -324,9 +339,12 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     var iter = 0
     var obj = -Double.MaxValue
     var obj_old = Double.NegativeInfinity
+    var llh = -Double.MaxValue
+    var llh_old = Double.NegativeInfinity
     var sampleCount = 0
-    while (iter < maxIter && math.abs(obj-obj_old) > thre) {
+    while (iter < maxIter && math.abs(llh-llh_old) > thre) {
       obj_old = obj
+      llh_old = llh
       // O(nnz + N exp)
       obj = 
         if (jaak) jaakkola(responses, features, prec, coefA, residual)
@@ -337,6 +355,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
         l1, jaak, emBayes)
       if (emBayes) updateGamma(globalPara, prec, rho, ard)
       obj += getRegObj(globalPara, rho, admm)
+      llh = getLLH(responses, features)
       iter += 1
     }
     val squaredDiff = 

@@ -332,7 +332,6 @@ object LR extends Settings {
     
     var iterTime = System.currentTimeMillis()
     var iter = 0
-    val th = 0f
     val lambda = lambda_init
     val globalPara = new Array[Float](numFeatures)
     var globalParaBC = sc.broadcast(globalPara)
@@ -350,7 +349,7 @@ object LR extends Settings {
         }
         else {
           val model = Model(features.numRows, gamma_init, admm)
-          model.runCGQN(responses, features, maxInnerIter, th)
+          model.runCGQN(responses, features, maxInnerIter, 0.1f)
         }
       }
     }
@@ -521,7 +520,7 @@ object LR extends Settings {
                 val lu = localUpdateBC.value
                 val gp = globalParaBC.value
                 val prior = toLocal(gp, featureMap, lu)
-                val th = 0.001f
+                val th = 1f
                 val maxIter = maxInnerIter
                 if (cg || lbfgs) {
                   model.runCGQN(responses, features, maxIter, th, cg, rho, admm, prior)
