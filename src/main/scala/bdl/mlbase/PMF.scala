@@ -83,7 +83,7 @@ case class Rating(val user: Int, val product: Int, val rating: Float) {
 class PMF private (var numBlocks: Int, var rank: Int, var iterations: Int, vb: Boolean,
     var gamma_r_init: Float, var gamma_c_init: Float) extends Serializable {
   
-  val STORAGE_LEVEL = StorageLevel.MEMORY_AND_DISK_SER
+  val STORAGE_LEVEL = StorageLevel.MEMORY_AND_DISK
   
   /**
    * Set the number of blocks to parallelize the computation into; pass -1 for an auto-configured
@@ -159,7 +159,7 @@ class PMF private (var numBlocks: Int, var rank: Int, var iterations: Int, vb: B
     val trainingDataByUserBlock = 
       trainingData.map{ rating => (rating.user % numBlocks, rating) }
     val trainingDataByProductBlock = trainingData.map{ rating =>
-      (rating.product % numBlocks, Rating(rating.product, rating.user, rating.rating))
+      (rating.product % numBlocks, rating)
     }
     
     val (userInLinks, userOutLinks) = 
@@ -593,19 +593,19 @@ object PMF {
     System.setProperty("spark.local.dir", tmpDir)
 //    System.setProperty("spark.ui.port", "44717")
     System.setProperty("spark.locality.wait", "10000")
-    val STORAGE_LEVEL = StorageLevel.MEMORY_AND_DISK_SER
+    val STORAGE_LEVEL = StorageLevel.MEMORY_AND_DISK
     val sc = new SparkContext(master, job, System.getenv("SPARK_HOME"), jar)
     val trainingData = 
       if (trainingPath.toLowerCase.contains("eachmovie"))
         sc.textFile(trainingPath).map(line => 
-          new Rating(parseLine(line, " ", mean, scale)))
+          new Rating(parseLine(line, " ", mean, scale))).persist(STORAGE_LEVEL)
       else if (trainingPath.toLowerCase.contains("syn"))
         sc.sequenceFile[NullWritable, Record](trainingPath)
           .map(pair => 
             new Rating(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
       else sc.textFile(trainingPath).flatMap(line => parseLine(line, mean, scale))
-        .map(record => new Rating(record))
-    trainingData.persist(STORAGE_LEVEL)
+        .map(record => new Rating(record)).persist(STORAGE_LEVEL)
+        
     val testingData = 
       if (testingPath.toLowerCase.contains("eachmovie")) 
         sc.textFile(testingPath).map(line => 

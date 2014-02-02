@@ -130,12 +130,14 @@ class Model (
         colSDe = cols.par.map(c => {
           var sd = 0f; var k = 0
           while (k<numFactors) {
-            if (vb)
+            if (vb) {
               VB.update(c, col_ptr, row_idx, res_c, rowFactor(k), rowPrecision(k),
                 colPriors(c)(k), gamma_c(k), colFactor(k), colPrecision(k))
-            else
+            }
+            else {
               MAP.update(c, col_ptr, row_idx, res_c, rowFactor(k),
-                colPriors(c)(k), gamma_c(k), gamma_x, colFactor(k))
+                colPriors(c)(k), gamma_c(k), colFactor(k))
+            }
             val diff = colFactor(k)(c) - colPriors(c)(k)
             val variance = if (vb) 1/colPrecision(k)(c) else 0
             sd += diff*diff + variance
@@ -147,12 +149,14 @@ class Model (
         rowSDe = rows.par.map(r => {
           var sd = 0f; var k = 0
           while (k<numFactors) {
-            if (vb)
+            if (vb) {
               VB.update(r, row_ptr, col_idx, res_r, colFactor(k), colPrecision(k),
                 rowPriors(r)(k), gamma_r(k), rowFactor(k), rowPrecision(k))
-            else
+            }
+            else {
               MAP.update(r, row_ptr, col_idx, res_r, colFactor(k),
-                rowPriors(r)(k), gamma_r(k), gamma_x, rowFactor(k))
+                rowPriors(r)(k), gamma_r(k), rowFactor(k))
+            }
             val variance = if (vb) 1/rowPrecision(k)(r) else 0
             val diff = rowFactor(k)(r) - rowPriors(r)(k) + variance
             sd += diff*diff
@@ -165,12 +169,14 @@ class Model (
         colSDe = cols.map(c => {
           var sd = 0f; var k = 0
           while (k<numFactors) {
-            if (vb)
+            if (vb) {
               VB.update(c, col_ptr, row_idx, res_c, rowFactor(k), rowPrecision(k),
                 colPriors(c)(k), gamma_c(k), colFactor(k), colPrecision(k))
-            else
+            }
+            else {
               MAP.update(c, col_ptr, row_idx, res_c, rowFactor(k),
-                colPriors(c)(k), gamma_c(k), gamma_x, colFactor(k))
+                colPriors(c)(k), gamma_c(k), colFactor(k))
+            }
             val diff = colFactor(k)(c) - colPriors(c)(k)
             val variance = if (vb) 1/colPrecision(k)(c) else 0
             sd += diff*diff + variance
@@ -181,12 +187,14 @@ class Model (
         rowSDe = rows.map(r => {
           var sd = 0f; var k = 0
           while (k<numFactors) {
-            if (vb)
+            if (vb) {
               VB.update(r, row_ptr, col_idx, res_r, colFactor(k), colPrecision(k),
                 rowPriors(r)(k), gamma_r(k), rowFactor(k), rowPrecision(k))
-            else
+            }
+            else {
               MAP.update(r, row_ptr, col_idx, res_r, colFactor(k),
-                rowPriors(r)(k), gamma_r(k), gamma_x, rowFactor(k))
+                rowPriors(r)(k), gamma_r(k), rowFactor(k))
+            }
             val diff = rowFactor(k)(r) - rowPriors(r)(k)
             val variance = if (vb) 1/rowPrecision(k)(r) else 0
             sd += diff*diff + variance
@@ -212,8 +220,10 @@ class Model (
   
   def ccdpp(
       data: SparseMatrix, maxOuterIter: Int, maxInnerIter: Int, thre: Float, 
-      multicore: Boolean, vb: Boolean, admm_r: Boolean, admm_c: Boolean, 
+      multicore: Boolean, vb: Boolean, 
+      admm_r: Boolean = false, admm_c: Boolean = false,
       updateGammaR: Boolean = false, updateGammaC: Boolean = false,
+      updateGamma: Boolean = false,
       rowPriors: Array[Array[Float]] = Array.ofDim[Float](numRows, numFactors),
       colPriors: Array[Array[Float]] = Array.ofDim[Float](numCols, numFactors)
       ): (Model, Int, Float, Float, Float) = {
@@ -246,63 +256,89 @@ class Model (
           i += 1
           val colDe = if (multicore) 
             cols.par.map(c => {
-              if (vb)
+              val gammaC = gamma_c(k)
+//                if (updateGammaC) gamma_c(k) 
+//                else gamma_c(k)*(col_ptr(c+1)-col_ptr(c))
+              if (vb) {
                 VB.updatepp(c, col_ptr, row_idx, res_c, rowFactor(k), rowPrecision(k),
-                  colPriors(c)(k), gamma_c(k), colFactor(k), colPrecision(k))
-              else 
+                  colPriors(c)(k), gammaC, colFactor(k), colPrecision(k))
+              }
+              else { 
                 MAP.updatepp(c, col_ptr, row_idx, res_c, rowFactor(k), 
-                  colPriors(c)(k), gamma_c(k), gamma_x, colFactor(k))
+                  colPriors(c)(k), gammaC, colFactor(k))
+              }
               val diff = colFactor(k)(c) - colPriors(c)(k)
               val de = if (vb) diff*diff + 1/colPrecision(k)(c) else diff*diff
               de
             }).fold(0f)(_+_)
           else 
             cols.map(c => {
-              if (vb)
+              val gammaC = gamma_c(k) 
+//                if (updateGammaC) gamma_c(k) 
+//                else gamma_c(k)*(col_ptr(c+1)-col_ptr(c))
+              if (vb) {
                 VB.updatepp(c, col_ptr, row_idx, res_c, rowFactor(k), rowPrecision(k),
-                  colPriors(c)(k), gamma_c(k), colFactor(k), colPrecision(k))
-              else 
+                  colPriors(c)(k), gammaC, colFactor(k), colPrecision(k))
+              }
+              else { 
                 MAP.updatepp(c, col_ptr, row_idx, res_c, rowFactor(k), 
-                  colPriors(c)(k), gamma_c(k), gamma_x, colFactor(k))
+                  colPriors(c)(k), gammaC, colFactor(k))
+              }
               val diff = colFactor(k)(c) - colPriors(c)(k)
               val de = if (vb) diff*diff + 1/colPrecision(k)(c) else diff*diff
               de
             }).fold(0f)(_+_)
           
-          if (updateGammaC && iter == maxOuterIter && i == maxInnerIter) {
+          if (updateGammaC && i == maxInnerIter) {
             gamma_c(k) = (numCols-1)/(colDe+0.01f)
           }
           if (i == maxInnerIter) colSDe += colDe
           //update numFactors-1 row latent factors
           val rowDe = if (multicore) 
             rows.par.map(r => {
-              if (vb)
+              val gammaR = gamma_r(k) 
+//                if (updateGammaR) gamma_r(k) 
+//                else gamma_r(k)*(row_ptr(r+1)-row_ptr(r))
+              if (vb) {
                 VB.updatepp(r, row_ptr, col_idx, res_r, colFactor(k), colPrecision(k),
-                  rowPriors(r)(k), gamma_r(k), rowFactor(k), rowPrecision(k))
-              else
+                  rowPriors(r)(k), gammaR, rowFactor(k), rowPrecision(k))
+              }
+              else {
                 MAP.updatepp(r, row_ptr, col_idx, res_r, colFactor(k), 
-                  rowPriors(r)(k), gamma_r(k), gamma_x, rowFactor(k))
+                  rowPriors(r)(k), gammaR, rowFactor(k))
+              }
               val diff = rowFactor(k)(r) - rowPriors(r)(k)
               val de = if (vb) diff*diff + 1/rowPrecision(k)(r) else diff*diff
               de
             }).fold(0f)(_+_)
           else 
             rows.map(r => {
-              if (vb)
+              val gammaR = gamma_r(k)
+//                if (updateGammaR) gamma_r(k) 
+//                else gamma_r(k)*(row_ptr(r+1)-row_ptr(r))
+              if (vb) {
                 VB.updatepp(r, row_ptr, col_idx, res_r, colFactor(k), colPrecision(k),
-                  rowPriors(r)(k), gamma_r(k), rowFactor(k), rowPrecision(k))
-              else
+                  rowPriors(r)(k), gammaR, rowFactor(k), rowPrecision(k))
+              }
+              else {
                 MAP.updatepp(r, row_ptr, col_idx, res_r, colFactor(k), 
-                  rowPriors(r)(k), gamma_r(k), gamma_x, rowFactor(k))
+                  rowPriors(r)(k), gammaR, rowFactor(k))
+              }
               val diff = rowFactor(k)(r) - rowPriors(r)(k)
               val de = if (vb) diff*diff + 1/rowPrecision(k)(r) else diff*diff
               de
             }).fold(0f)(_+_)
           
-          if (updateGammaR && iter == maxOuterIter && i == maxInnerIter) {
+          if (updateGammaR && i == maxInnerIter) {
             gamma_r(k) = (numRows-1)/(rowDe+0.01f)
           }
           if (i == maxInnerIter) rowSDe += rowDe
+          
+          if (updateGamma && i == maxInnerIter) {
+            val gamma = (numRows+numCols-1)/(rowDe+colDe+0.01f)
+            gamma_r(k) = gamma
+            gamma_c(k) = gamma
+          }
         }
         Model.updateResidual(row_ptr, col_idx, res_r, 
             rowFactor(k), colFactor(k), false, multicore)
@@ -313,15 +349,15 @@ class Model (
       rmse = Model.getRMSE(res_c)
 //      println("training rmse: " + rmse)
     }
-    if (iter < maxOuterIter && math.abs(rmse_old-rmse) <= thre) {
-      if (updateGammaR) {
-        if (vb) VB.updateGamma(rowFactor, rowPrecision, rowPriors, gamma_r)
-        else MAP.updateGamma(rowFactor, rowPriors, gamma_r)
-      }
-      if (updateGammaC)
-        if (vb) VB.updateGamma(colFactor, colPrecision, colPriors, gamma_c)
-        else MAP.updateGamma(colFactor, colPriors, gamma_c)
-    }
+//    if (iter < maxOuterIter && math.abs(rmse_old-rmse) <= thre) {
+//      if (updateGammaR) {
+//        if (vb) VB.updateGamma(rowFactor, rowPrecision, rowPriors, gamma_r)
+//        else MAP.updateGamma(rowFactor, rowPriors, gamma_r)
+//      }
+//      if (updateGammaC)
+//        if (vb) VB.updateGamma(colFactor, colPrecision, colPriors, gamma_c)
+//        else MAP.updateGamma(colFactor, colPriors, gamma_c)
+//    }
     rowSDe = math.sqrt(rowSDe/(numRows*numFactors)).toFloat
     colSDe = math.sqrt(colSDe/(numCols*numFactors)).toFloat
     (this, iter, rmse, rowSDe, colSDe)
@@ -330,11 +366,9 @@ class Model (
 
 object Model {
   
-  def apply (
-      data: SparseMatrix, numFactors: Int, gamma_r_init: Float,
-      gamma_c_init: Float, gamma_x_init: Float, 
-      admm_r: Boolean, admm_c: Boolean, vb: Boolean
-      ) : Model = {
+  def apply (data: SparseMatrix, numFactors: Int, gamma_r_init: Float, 
+      gamma_c_init: Float, gamma_x_init: Float, admm_r: Boolean, admm_c: Boolean, 
+      vb: Boolean) : Model = {
     
     def hash(x: Int): Int = {
       val r = x ^ (x >>> 20) ^ (x >>> 12)
@@ -355,8 +389,6 @@ object Model {
       }
       r += 1
     }
-//  val rowFactor = Array.fill(numFactors, numRows)(0.1f*(Random.nextFloat-0.5f))
-//  val colLatentFactor = Array.fill(numCols, numFactors)(0.1f*(Random.nextFloat-0.5f))
     val colFactor = Array.ofDim[Float](numFactors, numCols)
     val rowPrecision = 
       if (vb) Array.fill(numFactors, numRows)(gamma_r_init)

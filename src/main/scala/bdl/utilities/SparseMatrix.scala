@@ -220,7 +220,7 @@ object SparseMatrix {
         rowArray, colArray, numRows, numCols)
   }
   
-  def apply(array: Array[(Array[Int], Array[Int], Array[Float])]) : SparseMatrix = {
+  def apply(array: Array[(Array[Int], Array[Int], Array[Float])]) = {
     val sizes = array.map(_._1.length)
     val nnz = sizes.sum
     val row_idx = new Array[Int](nnz)
@@ -241,7 +241,7 @@ object SparseMatrix {
       array(l) = null
       l += 1
     }
-    SparseMatrix(row_idx, col_idx, value_r)
+    (row_idx, col_idx, value_r)
   }
   
   def apply(row_idx: Array[Int], col_idx: Array[Int], value_r: Array[Float]) = {

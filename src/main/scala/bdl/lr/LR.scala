@@ -487,14 +487,14 @@ object LR extends Settings {
           bwLog.write("\nrho: " + rho + "\n")
         }
         val time = (System.currentTimeMillis() - iterTime)*0.001
-        println("Average number of inner iterations: " + innerIterSum/numSlices)
+        println("Average number of inner iterations: " + 1.0*innerIterSum/numSlices)
         println("Iter: " + iter + " time elapsed: " + time + " AUC: " + auc +
           " llh: " + llh + " obj: " + obj)
 //        println("TPR: " + tpr.mkString(" "))
 //        println("FPR: " + fpr.mkString(" "))
         println("ave l1 norm: " + l1norm)
         bwLog.write("Average number of inner iterations: " + 
-            innerIterSum/numSlices + "\n")
+            1.0*innerIterSum/numSlices + "\n")
         bwLog.write("Iter: " + iter + " time elapsed: " + time + " AUC: " + auc +
           " llh: " + llh + " obj: " + obj + '\n')
         bwLog.write("ave l1 norm: " + l1norm + '\n')

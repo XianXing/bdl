@@ -34,8 +34,7 @@ object PMF extends Settings {
   val gamma_r_init = 10f
   val gamma_c_init = 10f
   val gamma_x_init = 1f
-  val lambda_r = 1.001f
-  val lambda_c = 1f
+  val lambda = 1f
   val maxOuterIter = 10
   val maxInnerIter = 1
   val numFactors = 20
@@ -57,6 +56,7 @@ object PMF extends Settings {
   val iso = false
   val updateGammaR = false
   val updateGammaC = false
+  val updateGamma = false
   val mode = "local[" + numCores + "]"
   val jars = Seq("sparkproject.jar")
   val multicore = numCores > numSlices
@@ -176,12 +176,12 @@ object PMF extends Settings {
     options.addOption(ADMM_OPTION, false, "using ADMM")
     options.addOption(NUM_COL_BLOCKS_OPTION, true, "number of column blocks")
     options.addOption(NUM_ROW_BLOCKS_OPTION, true, "number of row blocks")
-    options.addOption(LAMBDA_C_INIT_OPTION, true, "set lambda_c value")
-    options.addOption(LAMBDA_R_INIT_OPTION, true, "set lambda_r value")
+    options.addOption(LAMBDA_INIT_OPTION, true, "set lambda value")
     options.addOption(UPDATE_GAMMA_R_OPTION, false, "empirical estimate on gamma_r")
     options.addOption(GAMMA_R_INIT_OPTION, true, "initial guess for gamma_r")
     options.addOption(UPDATE_GAMMA_C_OPTION, false, "empirical estimate on gamma_c")
     options.addOption(GAMMA_C_INIT_OPTION, true, "initial guess for gamma_c")
+    options.addOption(UPDATE_GAMMA_OPTION, false, "empirical estimate on gamma")
     options.addOption(GAMMA_X_INIT_OPTION, true, "initial guess for gamma_x")
     options.addOption(NUM_LATENT_FACTORS_OPTION, true, "number of latent factors")
     options.addOption(ISO_OPTION, false, "isolated learning for partitions")
@@ -266,6 +266,7 @@ object PMF extends Settings {
     val admm_r = admm && numColBlocks>1
     val updateGammaR = line.hasOption(UPDATE_GAMMA_R_OPTION)
     val updateGammaC = line.hasOption(UPDATE_GAMMA_C_OPTION)
+    val updateGamma = line.hasOption(UPDATE_GAMMA_OPTION)
     val gamma_r_init = 
       if (line.hasOption(GAMMA_R_INIT_OPTION)) 
         line.getOptionValue(GAMMA_R_INIT_OPTION).toFloat
@@ -278,13 +279,9 @@ object PMF extends Settings {
       if (line.hasOption(GAMMA_X_INIT_OPTION)) 
         line.getOptionValue(GAMMA_X_INIT_OPTION).toFloat
       else 1f
-    val lambda_r = 
-      if (line.hasOption(LAMBDA_R_INIT_OPTION))
-        line.getOptionValue(LAMBDA_R_INIT_OPTION).toFloat
-      else 0f
-    val lambda_c =
-      if (line.hasOption(LAMBDA_C_INIT_OPTION))
-        line.getOptionValue(LAMBDA_C_INIT_OPTION).toFloat
+    val lambda = 
+      if (line.hasOption(LAMBDA_INIT_OPTION))
+        line.getOptionValue(LAMBDA_INIT_OPTION).toFloat
       else 0f
     val numFactors = 
       if (line.hasOption(NUM_LATENT_FACTORS_OPTION)) 
@@ -324,16 +321,17 @@ object PMF extends Settings {
     
     var jobName = "DIST_MF"
     if (vb) jobName += "_VB" else jobName += "_MAP"
-    if (admm) jobName += "_ADMM" 
+    if (admm) jobName += "_ADMM"
     if (multicore) jobName += "_mc"
     if (l1) jobName += "_l1"
     if (max_norm) jobName += "_max_norm"
     if (iso) jobName += "_iso"
+    if (updateGammaR) jobName += "_ugr"
+    if (updateGammaC) jobName += "_ugc"
+    if (updateGamma) jobName += "_ug"
     jobName +=  "_oi_" + maxOuterIter + "_ii_" + maxInnerIter + "_K_" + numFactors +
       "_rb_" + numRowBlocks + "_cb_" + numColBlocks +
-      "_ugr_" + updateGammaR + "_ugc_" + updateGammaC + 
-      "_gr_" + gamma_r_init + "_gc_" + gamma_c_init + 
-      "_lr_" + lambda_r + "_lc_" + lambda_c
+      "_gr_" + gamma_r_init + "_gc_" + gamma_c_init + "_lam_" + lambda
     val logPath = outputDir + jobName + ".txt"
     
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
@@ -342,11 +340,11 @@ object PMF extends Settings {
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
     System.setProperty("spark.akka.timeout", "60")
     System.setProperty("spark.akka.askTimeout", "60")
-//    System.setProperty("spark.serializer", 
-//        "org.apache.spark.serializer.KryoSerializer")
-//    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
+    System.setProperty("spark.serializer", 
+        "org.apache.spark.serializer.KryoSerializer")
+    System.setProperty("spark.kryo.registrator", "utilities.Registrator")
 //    System.setProperty("spark.kryoserializer.buffer.mb", "64")
-//    System.setProperty("spark.kryo.referenceTracking", "false")
+    System.setProperty("spark.kryo.referenceTracking", "false")
 //    System.setProperty("spark.mesos.coarse", "true")
 //    System.setProperty("spark.cores.max", numCores.toString)
     
@@ -372,8 +370,7 @@ object PMF extends Settings {
             (Array[Int], Array[Int], Array[Float]))](trainingDir)
         getPartitionedData(rawTrainingData, numRowBlocks, numColBlocks, dataPartitioner)
       }
-      else if (trainingDir.toLowerCase().contains("ml") || 
-          trainingDir.toLowerCase().contains("syn")) {
+      else if (trainingDir.toLowerCase().contains("ml")) {
         val tuples = sc.sequenceFile[NullWritable, Record](trainingDir, numSlices)
           .map(pair => 
             new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
@@ -461,32 +458,23 @@ object PMF extends Settings {
     
     var iterTime = System.currentTimeMillis()
     var iter = 0
-    val thre = 0.0001f
     var localOutputs = trainingData.mapValues(data => {
-      val gamma_r = if (vb) 1f else 1f
-      val gamma_c = if (vb) 1f else 1f
-      val gamma_x = 1f
-      Model(data, numFactors, gamma_r, gamma_c, gamma_x, admm_r, admm_c, vb)
-        .ccdpp(data, maxInnerIter, 1, thre, multicore, vb, false, false)
-    }).persist(storageLevel)    
-    
+      Model(data, numFactors, gamma_r_init, gamma_c_init, 1, admm_r, admm_c, vb)
+        .ccdpp(data, maxInnerIter, 1, 0.0001f, multicore, vb)
+    }).persist(storageLevel)
     var localModels = localOutputs.mapValues{
-      case (model, iter, rmse, rowSD, colSD) => {
-        model.setGammaC(gamma_c_init)
-        model.setGammaR(gamma_r_init)
-        model
-      }
+      case (model, iter, rmse, rowSD, colSD) => model
     }
     var localInfo = localOutputs.mapValues{
       case(model, iter, rmse, rowSD, colSD) => (iter, rmse, rowSD, colSD)
     }.collect
     
     val rowPrior = localModels.mapValues{
-          model => model.rowMap.map(i=>(i, Array.ofDim[Float](model.numFactors)))
-        }.persist(storageLevel)
+      model => model.rowMap.map(i=>(i, Array.ofDim[Float](model.numFactors)))
+    }.persist(storageLevel)
     val colPrior = localModels.mapValues{
-          model => model.colMap.map(i=>(i, Array.ofDim[Float](model.numFactors)))
-        }.persist(storageLevel)
+      model => model.colMap.map(i=>(i, Array.ofDim[Float](model.numFactors)))
+    }.persist(storageLevel)
     
     while (iter < maxOuterIter) {
       val globalRowFactors = 
@@ -494,7 +482,7 @@ object PMF extends Settings {
           updateGlobalPriors(localModels.flatMap{
             case(pid, model) =>
             timesGamma(model.getRowStats(admm_r), model.gamma_r, model.rowMap, pid)
-          }, l1, max_norm, lambda_r)
+          }, l1, max_norm, lambda)
           .groupByKey(dataPartitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
           //the global factors need to be sorted by
         }
@@ -504,7 +492,7 @@ object PMF extends Settings {
           updateGlobalPriors(localModels.flatMap{
             case(pid, model) =>
             timesGamma(model.getColStats(admm_c), model.gamma_c, model.colMap, pid)
-          }, l1, max_norm, lambda_c)
+          }, l1, max_norm, lambda)
           .groupByKey(dataPartitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
         else colPrior
       
@@ -561,29 +549,43 @@ object PMF extends Settings {
             val r = pid/numColBlocks; val c = pid%numColBlocks
             val msg = "partition(" + r + "," + c + ")" +"\ngamma_r: " + gamma_r +
               "\ngamma_c: " + gamma_c + "\ngamma_x: " + gamma_x
-            println(msg); bwLog.write(msg + "\n")
+            println(msg)
+            bwLog.write(msg + "\n")
           }
-        } 
+        }
+      }
+      else if (updateGamma){
+        val gammas = localModels.mapValues(model => Vector(model.gamma_r)).collect
+        gammas.foreach{
+          case(pid, gamma) => {
+            val r = pid/numColBlocks; val c = pid%numColBlocks
+            val msg = "partition(" + r + "," + c + ")" +"\ngamma: " + gamma
+            println(msg)
+            bwLog.write(msg + "\n")
+          }
+        }
       }
       localInfo.foreach{
         case(pid, (iter, rmse, rowSD, colSD)) => {
           val r = pid/numColBlocks; val c = pid%numColBlocks
           val msg = "partition(" + r + "," + c + ")" + " num inner iters: " + iter + 
             " block training rmse: " + rmse + " row sd: " + rowSD + " col sd: " + colSD
-          println(msg); bwLog.write(msg + "\n")
+          println(msg)
+          bwLog.write(msg + "\n")
         }
       }
+      val aveInnerInter = 1.0*localInfo.map(_._2._1).sum/localInfo.length
       val time = (System.currentTimeMillis() - iterTime)*0.001
       println("Testing RMSE: global " + testingRMSE_global + 
-        " local " + testingRMSE_local)
+        " local " + testingRMSE_local + " Ave InnerIter: " + aveInnerInter)
       bwLog.write("Testing RMSE: global " + testingRMSE_global + 
-        " local " + testingRMSE_local + "\n")
+        " local " + testingRMSE_local + " Ave InnerIter: " + aveInnerInter + "\n")
       println("Iter: " + iter + " finsied, time elapsed: " + time)
       bwLog.write("Iter: " + iter + " finished, time elapsed: " + time + "\n")
       iterTime = System.currentTimeMillis()
       iter += 1
       if (iter < maxOuterIter) {
-        val thre = 0.001f
+        val thre = 0.0005f
         val innerIter = maxInnerIter
 //        val innerIter = math.max(maxInnerIter - 2*iter, 2)
         val rddId = localOutputs.id
@@ -592,7 +594,7 @@ object PMF extends Settings {
             val rowPriors = Model.toLocal(data.rowMap, rowPriorsPairs)
             val colPirors = Model.toLocal(data.colMap, colPriorsPairs)
             model.ccdpp(data, innerIter, 1, thre, multicore, vb, admm_r, admm_c,
-              updateGammaR, updateGammaC, rowPriors, colPirors)
+              updateGammaR, updateGammaC, updateGamma, rowPriors, colPirors)
           }
         }.persist(storageLevel)
         localModels = localOutputs.mapValues(_._1)

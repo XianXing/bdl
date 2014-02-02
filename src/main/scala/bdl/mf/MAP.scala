@@ -5,7 +5,7 @@ object MAP{
   def update(
       r: Int, row_ptr: Array[Int], col_idx: Array[Int], 
       res_r: Array[Float], colFactors: Array[Float], prior: Float,
-      gamma_r: Float, gamma_x: Float, rowFactors: Array[Float]
+      gamma_r: Float, rowFactors: Array[Float]
       ) = {
     var i = row_ptr(r); var numerator = 0f; var denominator = 0f
     val rowFactor_rk = rowFactors(r)
@@ -15,9 +15,7 @@ object MAP{
       denominator += colFactors(c)*colFactors(c)
       i += 1
     }
-//    val gamma = gamma_r*(row_ptr(r+1)-row_ptr(r))+1e-10f
-    val gamma = gamma_r
-    rowFactors(r) = (gamma_x*numerator+gamma*prior)/(gamma_x*denominator+gamma)
+    rowFactors(r) = (numerator+gamma_r*prior)/(denominator+gamma_r)
     i = row_ptr(r)
     while (i < row_ptr(r+1)) {
       val c = col_idx(i)
@@ -28,7 +26,7 @@ object MAP{
   def updatepp(
       r: Int, row_ptr: Array[Int], col_idx: Array[Int], 
       res_r: Array[Float], colFactors: Array[Float], prior: Float,
-      gamma_r: Float, gamma_x: Float, rowFactors: Array[Float]
+      gamma_r: Float, rowFactors: Array[Float]
       ) = {
     var i = row_ptr(r); var numerator = 0f; var denominator = 0f
     while (i < row_ptr(r+1)) {
@@ -37,9 +35,23 @@ object MAP{
       denominator += colFactors(c)*colFactors(c)
       i += 1
     }
-//    val gamma = gamma_r*(row_ptr(r+1)-row_ptr(r))+1e-10f
-    val gamma = gamma_r
-    rowFactors(r) = (gamma_x*numerator+gamma*prior)/(gamma_x*denominator+gamma)
+    rowFactors(r) = (numerator+gamma_r*prior)/(denominator+gamma_r)
+  }
+  
+  def updatepp(
+      r: Int, row_ptr: Array[Int], col_idx: Array[Int], res_r: Array[Float], 
+      colMean: Array[Float], colPrecision: Array[Float], prior: Float, gamma_r: Float, 
+      rowMean: Array[Float], rowPrecision: Array[Float]
+      ) = {
+    var i = row_ptr(r); var numerator = 0f; var denominator = 0f; var c = 0
+    while (i < row_ptr(r+1)) {
+      c = col_idx(i)
+      numerator += res_r(i)*colMean(c)
+      denominator += colMean(c)*colMean(c) + 1/colPrecision(c)
+      i += 1
+    }
+    rowPrecision(r) = denominator+gamma_r
+    rowMean(r) = (numerator+gamma_r*prior)/rowPrecision(r)
   }
   
   def updateGamma(factors: Array[Array[Float]], priors: Array[Array[Float]], 

@@ -120,6 +120,9 @@ object MF {
       val colBID = math.min(pair._1._2/rowBlockSize, numColBlocks-1)
       (rowBID*numColBlocks + colBID, pair._2)
     }).groupByKey(partitioner).mapValues(seq => SparseMatrix(seq.toArray))
+    .mapValues{
+      case (row_idx, col_idx, value_r) => SparseMatrix(row_idx, col_idx, value_r)
+    }
   }
   
   def preprocessNetflix(

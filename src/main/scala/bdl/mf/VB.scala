@@ -31,7 +31,6 @@ object VB{
       rowMean: Array[Float], rowPrecision: Array[Float]
       ) = {
     var i = row_ptr(r); var numerator = 0f; var denominator = 0f; var c = 0
-    var count = 0
     while (i < row_ptr(r+1)) {
       c = col_idx(i)
       numerator += res_r(i)*colMean(c)
