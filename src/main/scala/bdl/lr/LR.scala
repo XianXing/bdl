@@ -186,6 +186,7 @@ object LR extends Settings {
           line.getOptionValue(NUM_CORES_OPTION))
       }
     }
+    
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
     System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
 //    System.setProperty("spark.speculation", "true")
@@ -230,7 +231,8 @@ object LR extends Settings {
     val featureSet = 
       if (featureThre > 0) {
         if (isSeq) {
-          sc.objectFile[Array[Int]](trainingDataDir).flatMap(countArr(_, featureThre/2))
+          sc.objectFile[Array[Int]](trainingDataDir)
+          .flatMap(countArr(_, featureThre/2))
         }
         else sc.textFile(trainingDataDir).flatMap(countLine(_, featureThre/2))
       }.reduceByKey(_+_, 20).filter(_._2 >= featureThre).map(_._1).collect.sorted
@@ -259,7 +261,8 @@ object LR extends Settings {
        })
       }
     val trainingData = rawTrainingData.groupByKey(dataPartitioner)
-       .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
+       .mapValues(seq => (seq.map(_._1).toArray, 
+         SparseMatrix(seq.map(_._2).toArray)))
        .cache
     val splitsStats = trainingData.mapValues{
       case(responses, features) => (responses.length, features.rowMap.length)
@@ -372,7 +375,8 @@ object LR extends Settings {
         }
         else {
           trainingData.join(localModels).map{
-            case(bid, (data, model)) => model.getParaStats(data._2.rowMap, numFeatures)
+            case(bid, (data, model)) => 
+              model.getParaStats(data._2.rowMap, numFeatures)
           }.reduce(_+=_).toArray(gradient)
         }
         var p = 1 //no shrinkage for the intercept
@@ -487,7 +491,8 @@ object LR extends Settings {
           bwLog.write("\nrho: " + rho + "\n")
         }
         val time = (System.currentTimeMillis() - iterTime)*0.001
-        println("Average number of inner iterations: " + 1.0*innerIterSum/numSlices)
+        println("Average number of inner iterations: " + 
+            1.0*innerIterSum/numSlices)
         println("Iter: " + iter + " time elapsed: " + time + " AUC: " + auc +
           " llh: " + llh + " obj: " + obj)
 //        println("TPR: " + tpr.mkString(" "))
@@ -523,7 +528,8 @@ object LR extends Settings {
                 val th = 1f
                 val maxIter = maxInnerIter
                 if (cg || lbfgs) {
-                  model.runCGQN(responses, features, maxIter, th, cg, rho, admm, prior)
+                  model.runCGQN(responses, features, maxIter, th, cg, 
+                    rho, admm, prior)
                 }
                 else {
                   model.runCD(responses, features, maxIter, th, rho, 

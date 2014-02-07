@@ -187,7 +187,7 @@ object PMF extends Settings {
     options.addOption(ISO_OPTION, false, "isolated learning for partitions")
     options.addOption(JAR_OPTION, true, "the path to find jar file")
     options.addOption(TMP_DIR_OPTION, true, 
-        "local dir for tmp files, including map output files and RDDs stored on disk")
+        "local dir for tmp files, including mapoutput files and RDDs stored on disk")
     options.addOption(MEMORY_OPTION, true, 
         "amount of memory to use per executor process")
     options.addOption(L1_REGULARIZATION, false, "use l1 regularization")
@@ -360,7 +360,7 @@ object PMF extends Settings {
     val colBlockMap = 
       if(!seq) sc.broadcast(getPartitionMap(numCols, numColBlocks, seedCol))
       else null
-    val dataPartitioner = new HashPartitioner(numSlices)
+    val partitioner = new HashPartitioner(numSlices)
     
     // read in the sparse matrix:
     val trainingData = 
@@ -368,20 +368,20 @@ object PMF extends Settings {
         val rawTrainingData =
           sc.objectFile[((Int, Int), 
             (Array[Int], Array[Int], Array[Float]))](trainingDir)
-        getPartitionedData(rawTrainingData, numRowBlocks, numColBlocks, dataPartitioner)
+        getPartitionedData(rawTrainingData, numRowBlocks, numColBlocks, partitioner)
       }
       else if (trainingDir.toLowerCase().contains("ml")) {
         val tuples = sc.sequenceFile[NullWritable, Record](trainingDir, numSlices)
           .map(pair => 
             new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
         getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
-          dataPartitioner)
+          partitioner)
       }
       else{
         val tuples = sc.textFile(trainingDir, numSlices)
           .flatMap(line => parseLine(line, mean, scale))
         getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
-          dataPartitioner)
+          partitioner)
       }
     
     //note that the ccdpp code treats the trainingData's value array as residuals and
@@ -419,7 +419,7 @@ object PMF extends Settings {
         val rawTestingData =
           sc.objectFile[((Int, Int), 
             (Array[Int], Array[Int], Array[Float]))](testingDir)
-        getPartitionedData(rawTestingData, numRowBlocks, numColBlocks, dataPartitioner)
+        getPartitionedData(rawTestingData, numRowBlocks, numColBlocks, partitioner)
       }
       else if (testingDir.toLowerCase().contains("ml") || 
           testingDir.toLowerCase().contains("syn")) {
@@ -427,13 +427,13 @@ object PMF extends Settings {
           .map(pair => 
             new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
         getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
-          dataPartitioner)
+          partitioner)
       }
       else{
         val tuples = sc.textFile(testingDir, numSlices)
           .flatMap(line => parseLine(line, mean, scale))
         getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, 
-          dataPartitioner)
+          partitioner)
       }
     testingData.persist(storageLevel)
     val numTestingSamples = testingData.map(pair => pair._2.col_idx.length).sum
@@ -483,7 +483,7 @@ object PMF extends Settings {
             case(pid, model) =>
             timesGamma(model.getRowStats(admm_r), model.gamma_r, model.rowMap, pid)
           }, l1, max_norm, lambda)
-          .groupByKey(dataPartitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
+          .groupByKey(partitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
           //the global factors need to be sorted by
         }
         else rowPrior
@@ -493,7 +493,7 @@ object PMF extends Settings {
             case(pid, model) =>
             timesGamma(model.getColStats(admm_c), model.gamma_c, model.colMap, pid)
           }, l1, max_norm, lambda)
-          .groupByKey(dataPartitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
+          .groupByKey(partitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
         else colPrior
       
       val priors = globalRowFactors.join(globalColFactors)
@@ -530,7 +530,8 @@ object PMF extends Settings {
         if (!iso && (iter % interval == 0 || iter+1 == maxOuterIter)) {
           scale*math.sqrt(testingData.join(globalModel).map{
             case(id, (data, (rowPrior, colPrior))) => data.getSE(
-            Model.toLocal(data.rowMap, rowPrior), Model.toLocal(data.colMap, colPrior))
+            Model.toLocal(data.rowMap, rowPrior), 
+            Model.toLocal(data.colMap, colPrior))
           }.reduce(_+_)/numTestingSamples)
         }
         else 0
@@ -569,7 +570,8 @@ object PMF extends Settings {
         case(pid, (iter, rmse, rowSD, colSD)) => {
           val r = pid/numColBlocks; val c = pid%numColBlocks
           val msg = "partition(" + r + "," + c + ")" + " num inner iters: " + iter + 
-            " block training rmse: " + rmse + " row sd: " + rowSD + " col sd: " + colSD
+            " block training rmse: " + rmse + " row sd: " + rowSD + 
+            " col sd: " + colSD
           println(msg)
           bwLog.write(msg + "\n")
         }

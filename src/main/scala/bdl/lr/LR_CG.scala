@@ -3,7 +3,6 @@ package lr
 import utilities._
 import lr_preprocess._
 
-import java.util.Random
 import java.io._
 
 import scala.math

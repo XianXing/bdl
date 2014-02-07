@@ -9,8 +9,8 @@ import scala.util.Random
 
 import org.apache.spark.{storage, Partitioner, SparkContext, rdd, broadcast}
 import org.apache.spark.SparkContext._
-import org.apache.hadoop.io.NullWritable
 
+import org.apache.hadoop.io.NullWritable
 import utilities._
 
 
