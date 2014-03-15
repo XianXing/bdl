@@ -11,7 +11,6 @@ class SparseMatrix (
   def getSE(rowFactors: Array[Array[Float]], colFactors: Array[Array[Float]],
     transpose: Boolean = false) = {
     var se = 0f
-    val ss : Tuple3[Int, Int, Int] = (1, 1, 1)
     if (transpose) {
       //row/col factors are rank*M/rank*N respectively
       var k = 0; val rank = rowFactors.length
@@ -56,62 +55,6 @@ class SparseMatrix (
     }
     se
   }
-  
-  def getPred(rowFactors: Array[Array[Float]], colFactors: Array[Array[Float]],
-    transpose: Boolean = false) = {
-    var se = 0f
-    val result = Array.ofDim[((Int, Int), (Float, Float, Int))](value_r.length)
-    if (transpose) {
-      //row/col factors are rank*M/rank*N respectively
-      var k = 0; val rank = rowFactors.length
-      val pred = Array.ofDim[Float](value_r.length)
-      val numRows = rowFactors(0).length
-      while (k < rank) {
-        val rowFactor = rowFactors(k)
-        val colFactor = colFactors(k)
-        var r = 0; var i = 0; 
-        while (r < numRows) {
-          i = row_ptr(r)
-          while (i < row_ptr(r+1)) {
-            pred(i) += rowFactor(r)*colFactor(col_idx(i))
-            i += 1
-          }
-          r += 1
-        }
-        k += 1
-      }
-      var r = 0; var i = 0; 
-      while (r < numRows) {
-        i = row_ptr(r)
-        while (i < row_ptr(r+1)) {
-          result(i) = ((rowMap(r), colMap(col_idx(i))), (value_r(i), pred(i), 1))
-          i += 1
-        }
-        r += 1
-      }
-    }
-    else {
-      var r = 0; var i = 0
-      val numRows = rowFactors.length
-      while (r < numRows) {
-        i = row_ptr(r)
-        while (i < row_ptr(r+1)) {
-          val c = col_idx(i)
-          val rowFactor = rowFactors(r)
-          val colFactor = colFactors(c)
-          var k = 0; var pred = 0f; val l = rowFactor.length
-          while (k < l) {
-            pred += rowFactor(k)*colFactor(k)
-            k += 1
-          }
-          result(i) = ((rowMap(r), colMap(col_idx(i))), (value_r(i), pred, 1))
-          i += 1
-        }
-        r += 1
-      }
-    }
-    result
-  }
 }
 
 object SparseMatrix {
@@ -140,7 +83,8 @@ object SparseMatrix {
     val col_ptr = Array.ofDim[Int](numCols+1)
     val rowMap = new HashMap[Int, Int]
     val colMap = new HashMap[Int, Int]
-    //need them to be sorted for an easy reverse operation (see Model.toLocal function)
+    //need them to be sorted for an easy reverse operation 
+    //(see mf.Model.toLocal function)
     val rowArray = rowSet.toArray.sorted; val colArray = colSet.toArray.sorted
     var r = 0; while(r<numRows) {rowMap.put(rowArray(r), r); r+=1}
     var c = 0; while(c<numCols) {colMap.put(colArray(c), c); c+=1}
@@ -265,7 +209,8 @@ object SparseMatrix {
     val col_ptr = new Array[Int](numCols+1)
     val rowMap = new HashMap[Int, Int]
     val colMap = new HashMap[Int, Int]
-    //need them to be sorted for an easy reverse operation (see Model.toLocal function)
+    //need them to be sorted for an easy reverse operation 
+    //(see mf.Model.toLocal function)
     val rowArray = rowSet.toArray.sorted; val colArray = colSet.toArray.sorted
     var r = 0; while(r<numRows) {rowMap.put(rowArray(r), r); r+=1}
     var c = 0; while(c<numCols) {colMap.put(colArray(c), c); c+=1}
@@ -367,7 +312,8 @@ object SparseMatrix {
     val numRows = rowSet.size
     val row_ptr = Array.ofDim[Int](numRows+1)
     val rowMap = new HashMap[Int, Int]
-    //need them to be sorted for an easy reverse operation (see Model.toLocal function)
+    //need them to be sorted for an easy reverse operation 
+    //(see mf.Model.toLocal function)
     val rowArray = rowSet.toArray.sorted
     var p = 0 
     while(p < numRows) {

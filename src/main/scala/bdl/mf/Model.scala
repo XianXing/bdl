@@ -3,13 +3,12 @@ package mf
 import utilities._
 import java.util._
 
-class Model (
-    val rowFactor: Array[Array[Float]], val colFactor: Array[Array[Float]],
+class Model (val rowFactor: Array[Array[Float]], val colFactor: Array[Array[Float]],
     rowPrecision: Array[Array[Float]], colPrecision: Array[Array[Float]],
     rowLags: Array[Array[Float]], colLags: Array[Array[Float]],
     val rowMap: Array[Int], val colMap: Array[Int], 
-    val gamma_r: Array[Float], val gamma_c: Array[Float], var gamma_x: Float
-    ) extends Serializable {
+    val gamma_r: Array[Float], val gamma_c: Array[Float], var gamma_x: Float) 
+    extends Serializable {
   
   val numRows = rowFactor(0).length 
   val numCols = colFactor(0).length
@@ -108,7 +107,7 @@ class Model (
     //priors are M*K and N*K respectively, while factors are K*M and K*N respectively
     val row_ptr = data.row_ptr; val row_idx = data.row_idx
     val col_ptr = data.col_ptr; val col_idx = data.col_idx
-    val value_r = data.value_r; val value_c = data.value_c
+    val res_r = data.value_r; val res_c = data.value_c
     
     //update the scaled Lagrangian multipilers
     if (admm_r) ADMM.updateLag(rowFactor, multicore, rowLags, rowPriors)
@@ -118,13 +117,7 @@ class Model (
     var rowSDe = 0f; var colSDe = 0f
     val rows = Array.tabulate(numRows)(i => i)
     val cols = Array.tabulate(numCols)(i => i)
-    val res_r = Array.ofDim[Float](value_r.length)
-    val res_c = Array.ofDim[Float](value_c.length)
     while (iter < maxIter && math.abs(rmse_old-rmse) > thre) {
-      Model.getResidual(col_ptr, row_idx, value_c, colFactor, rowFactor, 
-          multicore, res_c)
-      Model.getResidual(row_ptr, col_idx, value_r, rowFactor, colFactor, 
-          multicore, res_r)
       if (multicore) {
         //update col factors
         colSDe = cols.par.map(c => {
@@ -435,7 +428,7 @@ object Model {
     val nnz = res.length
     val se =
       if (multicore) res.par.map(r => r*r).fold(0f)(_+_)
-      else { var i = 0; var sd = 0f; while (i < nnz) { sd += res(i)*res(i); i+=1}; sd }
+      else res.view.map(r => r*r).sum
     math.sqrt(se/nnz).toFloat
   }
   

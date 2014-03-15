@@ -9,10 +9,12 @@ import org.apache.spark.SparkContext._
 import org.apache.spark.serializer.KryoRegistrator
 import org.apache.commons.cli._
 import utilities._
+import utilities.Settings._
 import Functions._
+import DistributedGradient._
 import preprocess.LR._
 
-object LR extends Settings {
+object LR {
 //  val trainingDataDir = "input/KDDCUP2010/kdda"
 //  val testingDataDir = "input/KDDCUP2010/kdda.t"
   val trainingDataDir = "../datasets/UCI_Adult/a9a"
@@ -23,27 +25,30 @@ object LR extends Settings {
   val numCores = 1
   val numSlices = 10
   val mode = "local[" + numCores + "]"
-  val maxOuterIter = 50
-  val maxInnerIter = 20
+  val maxOuterIter = 20
+  val maxInnerIter = 10
   val lambda_init = 0.001f
   val gamma_init = 1.0f
   val rho_init = 1.0f
   val featureThre = 1
   val jaak = false
   val bohn = false
-  val admm = true
+  val admm = false
   val emBayes = true
-  val ard = true
+  val ard = false
   val exact = false
   val lbfgs = false
   val cg = false
-  val l1 = true
+  val l1 = false
   val tmpDir = "tmp"
   val memory = "1g"
   val numReducers = 2*numCores
   val jars = Seq("sparkproject.jar")
   val stopCriteria = 1e-6
   val interval = 1
+  val savgm = false
+  val avgm = false
+  val subsampleRate = 0.1f
   
   def toLocal(global: Array[Float], map: Array[Int], shared: Array[Boolean]) = {
     val localNumFeatures = map.length
@@ -77,7 +82,7 @@ object LR extends Settings {
     options.addOption(GAMMA_INIT_OPTION, true, "set gamma value")
     options.addOption(JAR_OPTION, true, "the path to find jar file")
     options.addOption(TMP_DIR_OPTION, true, "the local dir for tmp files")
-    options.addOption(MEMORY_OPTION, true, 
+    options.addOption(MEM_OPTION, true, 
         "amount of memory to use per executor process")
     options.addOption(L1_REGULARIZATION_OPTION, false, "use l1 regularization")
     options.addOption(FEATURE_THRESHOLD_OPTION, true, 
@@ -173,8 +178,8 @@ object LR extends Settings {
     if (line.hasOption(TMP_DIR_OPTION)) {
       System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
     }
-    if (line.hasOption(MEMORY_OPTION)) {
-      System.setProperty("spark.executor.memory", line.getOptionValue(MEMORY_OPTION))
+    if (line.hasOption(MEM_OPTION)) {
+      System.setProperty("spark.executor.memory", line.getOptionValue(MEM_OPTION))
     }
     if (line.hasOption(NUM_REDUCERS_OPTION) || line.hasOption(NUM_CORES_OPTION)) {
       if (line.hasOption(NUM_REDUCERS_OPTION)) {
@@ -235,14 +240,14 @@ object LR extends Settings {
           .flatMap(countArr(_, featureThre/2))
         }
         else sc.textFile(trainingDataDir).flatMap(countLine(_, featureThre/2))
-      }.reduceByKey(_+_, 20).filter(_._2 >= featureThre).map(_._1).collect.sorted
+      }.reduceByKey(_+_).filter(_._2 >= featureThre).map(_._1).collect.sorted
       else null
     
     val featureMapBC = 
       if (featureThre > 0) sc.broadcast(featureSet.zipWithIndex.toMap)
       else null
     
-    val rawTrainingData = 
+    val trainingData = {
       if (isSeq) {
         if (isBinary) {
           sc.objectFile[Array[Int]](trainingDataDir).map(arr => {
@@ -260,10 +265,36 @@ object LR extends Settings {
         else (bid, parseLine(line, isBinary))
        })
       }
-    val trainingData = rawTrainingData.groupByKey(dataPartitioner)
-       .mapValues(seq => (seq.map(_._1).toArray, 
-         SparseMatrix(seq.map(_._2).toArray)))
-       .cache
+    }.groupByKey(dataPartitioner)
+     .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
+     .cache
+    
+    val seed = 19870102
+    val subsampledTrainingData = if (savgm) {
+      if (isSeq) {
+        if (isBinary) {
+          sc.objectFile[Array[Int]](trainingDataDir)
+          .sample(false, subsampleRate, seed)
+          .map(arr => {
+            val bid = (math.random*numSlices).toInt
+            if (featureThre > 0) (bid, parseArr(arr, featureMapBC.value))
+            else (bid, parseArr(arr))
+          })
+        }
+        else null
+      }
+      else {
+        sc.textFile(trainingDataDir).sample(false, subsampleRate, seed).map(line => {
+        val bid = (math.random*numSlices).toInt
+        if (featureThre > 0) (bid, parseLine(line, featureMapBC.value, isBinary))
+        else (bid, parseLine(line, isBinary))
+       })
+      }
+    }.groupByKey(dataPartitioner)
+     .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
+     .cache 
+    else null
+    
     val splitsStats = trainingData.mapValues{
       case(responses, features) => (responses.length, features.rowMap.length)
     }.collect
@@ -336,7 +367,10 @@ object LR extends Settings {
     var iterTime = System.currentTimeMillis()
     var iter = 0
     val lambda = lambda_init
+    val paraStats = new Array[Float](numFeatures)
+    val ssParaStats = new Array[Float](numFeatures)
     val globalPara = new Array[Float](numFeatures)
+    val ssGlobalPara = new Array[Float](numFeatures)
     var globalParaBC = sc.broadcast(globalPara)
     val gradient = if (exact) new Array[Float](numFeatures) else null
     val gradient_old = if (exact) new Array[Float](numFeatures) else null
@@ -386,13 +420,13 @@ object LR extends Settings {
         }
         if (cg) {
           // conjugate gradient descent
-          if (iter > 1) Functions.getCGDirection(gradient, gradient_old, direction)
+          if (iter > 1) getCGDirection(gradient, gradient_old, direction)
           else Functions.copy(gradient, direction)
         }
         else {
           //limited-memory BFGS
           if (iter > 1) {
-            Functions.getLBFGSDirection(deltaPara, gradient, gradient_old, direction)
+            getLBFGSDirection(deltaPara, gradient, gradient_old, direction)
           }
           else Functions.copy(gradient, direction)
         }
@@ -406,18 +440,19 @@ object LR extends Settings {
         }.sum.toFloat
         p = 1
         var gu = gradient(0)*direction(0)
-        var hessian = 0f
+        var uhu = 0f
         while (p < numFeatures) {
-          hessian += direction(p)*direction(p)
+          uhu += direction(p)*direction(p)
           gu += gradient(p)*direction(p)
           p += 1
         }
-        hessian *= lambda
-        hessian += h
+        uhu *= lambda
+        uhu += h
         p = 0
         while (p < numFeatures) {
           gradient_old(p) = gradient(p)
-          val delta = gu/h*direction(p)
+          //equation (17) in Tom Minka 2003
+          val delta = gu/uhu*direction(p)
           if (!cg) deltaPara(p) = delta
           globalPara(p) += delta
           p += 1
@@ -434,7 +469,7 @@ object LR extends Settings {
           trainingData.join(localModels).map{
             case(bid, (data, model)) => 
               model.getParaStatsSpa(data._2.rowMap, admm, emBayes)
-          }.reduce(_+_).toArray(globalPara)
+          }.reduce(_+_).toArray(paraStats)
         }
         else {
           if (emBayes) {
@@ -446,14 +481,39 @@ object LR extends Settings {
           trainingData.join(localModels).map{
             case(bid, (data, model)) => 
               model.getParaStats(data._2.rowMap, numFeatures, admm, emBayes)
-          }.reduce(_+=_).toArray(globalPara)
+          }.reduce(_+=_).toArray(paraStats)
         }
+        
         var p = 0
         while (p < numFeatures) {
           globalPara(p) = 
-            if (l1) Functions.l1Prox(globalPara(p), featureCount(p), lambda)
-            else Functions.l2Prox(globalPara(p), featureCount(p), lambda)
+            if (l1) Functions.l1Prox(paraStats(p), featureCount(p), lambda)
+            else Functions.l2Prox(paraStats(p), featureCount(p), lambda)
           p += 1
+        }
+        
+        //use bootstrap to correct the bias 
+        if (savgm) {
+          val subsampledResults = subsampledTrainingData.map{
+            case(bid, (responses, features)) => {
+              val th = 0.001f
+              Model(features.numRows, gamma_init, admm)
+              .runCGQN(responses, features, maxInnerIter, th, cg)
+              ._1
+              //only consider the non-sparse case here
+              .getParaStats(features.rowMap, numFeatures)
+            }
+          }.reduce(_+=_).toArray(ssParaStats)
+          
+          var p = 0
+          while (p < numFeatures) {
+            ssGlobalPara(p) = 
+              if (l1) Functions.l1Prox(ssParaStats(p), featureCount(p), lambda)
+              else Functions.l2Prox(ssParaStats(p), featureCount(p), lambda)
+            p += 1
+          }
+          globalPara(p) = 
+            (globalPara(p) - subsampleRate*ssGlobalPara(p))/(1-subsampleRate)
         }
       }
       globalParaBC = sc.broadcast(globalPara)
@@ -466,7 +526,7 @@ object LR extends Settings {
           getBinPred(feature, globalParaBC.value, 500)).reduce(_+=_)
           .toArray.map(_/numTestNeg)
         old_auc = auc
-        auc = getAUC(tpr, fpr, numTestPos, numTestNeg)
+        auc = getAUC(tpr, fpr)
         //calculate the log likelihood
         val llhPos = testingDataPos.map(feature => 
           getLLH(1, feature, globalParaBC.value)).sum
@@ -562,13 +622,13 @@ object LR extends Settings {
       println("global: " + str)
       bwLog.write("global: " + str + '\n')
     }
-    testingData.map{
-      case(response, feature) => {
-        val pred = sigmoid(feature.dot(globalParaBC.value))
-        val y = if (response) 1 else -1
-        y + "\t" + pred + "\t" + feature.zip(globalParaBC.value).mkString(" ")
-      }
-    }.saveAsTextFile(outputDir + "pred")
+//    testingData.map{
+//      case(response, feature) => {
+//        val pred = sigmoid(feature.dot(globalParaBC.value))
+//        val y = if (response) 1 else -1
+//        y + "\t" + pred + "\t" + feature.zip(globalParaBC.value).mkString(" ")
+//      }
+//    }.saveAsTextFile(outputDir + "pred")
     bwLog.write("Total time elapsed " 
         + (System.currentTimeMillis()-currentTime)*0.001 + "(s)\n")
     bwLog.close()

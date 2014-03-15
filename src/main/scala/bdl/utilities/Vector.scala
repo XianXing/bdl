@@ -97,7 +97,6 @@ class Vector(val elements: Array[Float]) extends Serializable {
   def += (other: Vector): Vector = {
     if (length != other.length)
       throw new IllegalArgumentException("Vectors of different length")
-    var ans = 0.0
     var i = 0
     while (i < length) {
       elements(i) += other(i)
@@ -116,10 +115,9 @@ class Vector(val elements: Array[Float]) extends Serializable {
 
   def + (scalar: Float): Vector = Vector(length, i => this(i) + scalar)
   def * (scale: Float): Vector = Vector(length, i => this(i) * scale)
+  def / (scale: Float): Vector = Vector(length, i => this(i) / scale)
 
   def multiply (d: Float) = this * d
-
-  def / (d: Float): Vector = this * (1 / d)
 
   def divide (d: Float) = this / d
 

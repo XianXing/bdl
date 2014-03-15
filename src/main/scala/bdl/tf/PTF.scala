@@ -1,8 +1,5 @@
 package tf
 
-import utilities._
-import preprocess.TF._
-
 import java.io._
 import scala.math._
 import scala.util.Sorting._
@@ -14,8 +11,15 @@ import org.apache.spark.serializer.KryoRegistrator
 import org.apache.commons.cli._
 import org.apache.hadoop.io.NullWritable
 
+import utilities.SparseCube
+import utilities.Settings._
+import utilities.Triplet
+import utilities.Vector
+import preprocess.TF._
+
+
 // random row/col subsampling
-object PTF extends Settings {
+object PTF {
   
   val synthetic = false
   val TRAINING_PATH = if (synthetic) 

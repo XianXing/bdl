@@ -2,13 +2,13 @@ package mf
 
 object ADMM{
   
-  def updateLag(rowFactors: Array[Array[Float]], multi_thread: Boolean,
+  def updateLag(rowFactors: Array[Array[Float]], multicore: Boolean,
       rowLags: Array[Array[Float]], rowPriors: Array[Array[Float]]) = {
     //update the scaled Lagrangian multipilers
     val numFactors = rowLags.length
     val numRows = rowPriors.length
     
-    if (multi_thread) {
+    if (multicore) {
       for (r <- (0 until numRows).par) {
         var k = 0
         while (k < numFactors) {

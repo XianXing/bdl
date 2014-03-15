@@ -1,8 +1,5 @@
 package mf
 
-import utilities._
-import preprocess.MF._
-
 import java.io._
 import scala.math._
 import scala.util.Sorting._
@@ -15,8 +12,12 @@ import org.apache.spark.serializer.KryoRegistrator
 import org.apache.commons.cli._
 import org.apache.hadoop.io.NullWritable
 
+import utilities._
+import utilities.Settings._
+import preprocess.MF._
+
 // random row/col subsampling
-object PMF extends Settings {
+object PMF {
   
   val seq = true
   val trainingDir = 
@@ -114,7 +115,7 @@ object PMF extends Settings {
       j = 0
       while (j < l) {
         weightedSum(j) = weightedSum(j)*ratio
-        j += 1 
+        j += 1
       }
     }
   }
@@ -188,7 +189,7 @@ object PMF extends Settings {
     options.addOption(JAR_OPTION, true, "the path to find jar file")
     options.addOption(TMP_DIR_OPTION, true, 
         "local dir for tmp files, including mapoutput files and RDDs stored on disk")
-    options.addOption(MEMORY_OPTION, true, 
+    options.addOption(MEM_OPTION, true, 
         "amount of memory to use per executor process")
     options.addOption(L1_REGULARIZATION, false, "use l1 regularization")
     options.addOption(NUM_ROWS_OPTION, true, "number of rows")
@@ -268,11 +269,11 @@ object PMF extends Settings {
     val updateGammaC = line.hasOption(UPDATE_GAMMA_C_OPTION)
     val updateGamma = line.hasOption(UPDATE_GAMMA_OPTION)
     val gamma_r_init = 
-      if (line.hasOption(GAMMA_R_INIT_OPTION)) 
+      if (line.hasOption(GAMMA_R_INIT_OPTION))
         line.getOptionValue(GAMMA_R_INIT_OPTION).toFloat
       else 10f
     val gamma_c_init = 
-      if (line.hasOption(GAMMA_C_INIT_OPTION)) 
+      if (line.hasOption(GAMMA_C_INIT_OPTION))
         line.getOptionValue(GAMMA_C_INIT_OPTION).toFloat
       else 10f
     val gamma_x_init = 
@@ -305,8 +306,8 @@ object PMF extends Settings {
     if (line.hasOption(TMP_DIR_OPTION)) {
       System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
     }
-    if (line.hasOption(MEMORY_OPTION)) {
-      System.setProperty("spark.executor.memory", line.getOptionValue(MEMORY_OPTION))
+    if (line.hasOption(MEM_OPTION)) {
+      System.setProperty("spark.executor.memory", line.getOptionValue(MEM_OPTION))
     }
     if (line.hasOption(NUM_REDUCERS_OPTION) || line.hasOption(NUM_CORES_OPTION)) {
       if (line.hasOption(NUM_REDUCERS_OPTION)) {
@@ -351,6 +352,11 @@ object PMF extends Settings {
     val storageLevel = storage.StorageLevel.MEMORY_ONLY
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
     val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
+    
+    def hash(x: Int): Int = {
+      val r = x ^ (x >>> 20) ^ (x >>> 12)
+      r ^ (r >>> 7) ^ (r >>> 4)
+    }
     
     val seedRow = hash(numRows)
     val rowBlockMap = 
@@ -481,7 +487,7 @@ object PMF extends Settings {
         if (numColBlocks>1 && !iso) {
           updateGlobalPriors(localModels.flatMap{
             case(pid, model) =>
-            timesGamma(model.getRowStats(admm_r), model.gamma_r, model.rowMap, pid)
+              timesGamma(model.getRowStats(admm_r), model.gamma_r, model.rowMap, pid)
           }, l1, max_norm, lambda)
           .groupByKey(partitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
           //the global factors need to be sorted by
@@ -491,7 +497,7 @@ object PMF extends Settings {
         if (numRowBlocks>1 && !iso)
           updateGlobalPriors(localModels.flatMap{
             case(pid, model) =>
-            timesGamma(model.getColStats(admm_c), model.gamma_c, model.colMap, pid)
+              timesGamma(model.getColStats(admm_c), model.gamma_c, model.colMap, pid)
           }, l1, max_norm, lambda)
           .groupByKey(partitioner).mapValues(seq => (seq.toArray).sortBy(_._1))
         else colPrior
@@ -501,13 +507,13 @@ object PMF extends Settings {
         priors.persist(storageLevel)
         if (iter+1 == maxOuterIter && false) {
           priors.map{case(bid, (rowFactors, colFactors)) =>
-            rowFactors.map{case(r, rowFactor) => 
-              r + "\t" + rowFactor.mkString(" ")
+            rowFactors.map{
+              case(r, rowFactor) => r + "\t" + rowFactor.mkString(" ")
             }.mkString("\n")
           }.saveAsTextFile(outputDir + "globalRowFactors")
           priors.map{case(bid, (rowFactors, colFactors)) =>
-            colFactors.map{case(c, colFactor) => 
-              c + "\t" + colFactor.mkString(" ")
+            colFactors.map{
+              case(c, colFactor) => c + "\t" + colFactor.mkString(" ")
             }.mkString("\n")
           }.saveAsTextFile(outputDir + "globalColFactors")
         }

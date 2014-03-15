@@ -7,7 +7,9 @@ import scala.collection.mutable.{HashMap, HashSet, ArrayBuffer}
 import scala.io._
 import scala.util.Random
 
-import org.apache.spark.{storage, Partitioner, SparkContext, rdd, broadcast}
+import org.apache.spark.{storage, Partitioner, SparkContext}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.SparkContext._
 import org.apache.hadoop.io.NullWritable
 
@@ -55,14 +57,14 @@ object MF {
   def getPartitionID(record: Record, numRowBlocks: Int, numColBlocks: Int) 
     : Int = (record.rowIdx%numRowBlocks)*numColBlocks + record.colIdx%numColBlocks
     
-  def getPartitionMap(numRows: Int, numRowBlocks: Int, seed: Long) 
+  def getPartitionMap(length: Int, numBlocks: Int, seed: Long) 
     : Array[Byte] = {
-    val partitionMap = Array.ofDim[Byte](numRows)
+    val partitionMap = Array.ofDim[Byte](length)
     val random = new Random(seed)
-    val stats = Array.ofDim[Int](numRowBlocks)
+    val stats = Array.ofDim[Int](numBlocks)
     var r = 0
-    while (r < numRows) {
-      val id = (random.nextInt(numRowBlocks)).toByte
+    while (r < length) {
+      val id = (random.nextInt(numBlocks)).toByte
       stats(id) += 1
       partitionMap(r) = id
       r += 1
@@ -74,10 +76,10 @@ object MF {
     partitionMap
   }
   
-  def getPartitionedData(records: rdd.RDD[Record], numColBlocks: Int,
-      rowPartitionMap: broadcast.Broadcast[Array[Byte]], 
-      colPartitionMap: broadcast.Broadcast[Array[Byte]],
-      partitioner: Partitioner) : rdd.RDD[(Int, SparseMatrix)] = {
+  def getPartitionedData(records: RDD[Record], numColBlocks: Int,
+      rowPartitionMap: Broadcast[Array[Byte]], 
+      colPartitionMap: Broadcast[Array[Byte]],
+      partitioner: Partitioner) : RDD[(Int, SparseMatrix)] = {
      
     //on the choice between ArrayBuffer and ListBuffer:
     //altough ArrayBuffer consumes more memory in this case, it has lower cache-miss
@@ -95,10 +97,10 @@ object MF {
     .mapValues(buf => SparseMatrix(buf.toArray))
   }
   
-  def getPartitionedData(records: rdd.RDD[Record], numColBlocks: Int,
-      rowPartitionMapBC: broadcast.Broadcast[Array[Byte]], 
-      colPartitionMapBC: broadcast.Broadcast[Array[Byte]], numReducers: Int)
-    : rdd.RDD[(Int, SparseMatrix)] = {
+  def getPartitionedData(records: RDD[Record], numColBlocks: Int,
+      rowPartitionMapBC: Broadcast[Array[Byte]], 
+      colPartitionMapBC: Broadcast[Array[Byte]], numReducers: Int)
+    : RDD[(Int, SparseMatrix)] = {
     records.mapPartitions(_.map(record => {
       val rowPartitionMap = rowPartitionMapBC.value
       val colPartitionMap = colPartitionMapBC.value
@@ -109,7 +111,7 @@ object MF {
   }
   
   def getPartitionedData(
-      data: rdd.RDD[((Int, Int), (Array[Int], Array[Int], Array[Float]))],
+      data: RDD[((Int, Int), (Array[Int], Array[Int], Array[Float]))],
       numRowBlocks: Int, numColBlocks: Int, partitioner: Partitioner) = {
     val (maxRowID, maxColID) = data.map(_._1)
       .reduce((p1, p2) => (math.max(p1._1, p2._1), math.max(p1._2, p2._2)))
@@ -122,6 +124,30 @@ object MF {
     }).groupByKey(partitioner).mapValues(seq => SparseMatrix(seq.toArray))
     .mapValues{
       case (row_idx, col_idx, value_r) => SparseMatrix(row_idx, col_idx, value_r)
+    }
+  }
+  
+  def toSparseMatrixBlocks(sc: SparkContext, inputDir: String, 
+      rowBlockMap: Broadcast[Array[Byte]], colBlockMap: Broadcast[Array[Byte]],
+      numRowBlocks: Int, numColBlocks: Int, 
+      part: Partitioner, syn: Boolean, mean: Float, scale: Float)
+    : RDD[(Int, SparseMatrix)] = {
+    
+    if (syn) {
+      val rawTrainingData =
+        sc.objectFile[((Int, Int), (Array[Int], Array[Int], Array[Float]))](inputDir)
+      getPartitionedData(rawTrainingData, numRowBlocks, numColBlocks, part)
+    }
+    else if (inputDir.toLowerCase().contains("ml")) {
+      val tuples = sc.sequenceFile[NullWritable, Record](inputDir)
+        .map(pair => 
+          new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
+      getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, part)
+    }
+    else {
+      val tuples = sc.textFile(inputDir)
+        .flatMap(line => parseLine(line, mean, scale))
+      getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, part)
     }
   }
   

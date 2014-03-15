@@ -14,12 +14,15 @@ import org.apache.commons.cli._
 import org.apache.hadoop.io.NullWritable
 import org.apache.hadoop.mapred.SequenceFileOutputFormat
 
-import utilities._
+import utilities.SparseMatrix
+import utilities.Settings._
+import utilities.Record
+import utilities.Vector
 import preprocess.MF._
 
 //generate synthetic dataset
 
-object GenSynMat extends Settings{
+object GenSynMat {
   
   val numFactors = 10
   val numCores = 1
@@ -57,7 +60,7 @@ object GenSynMat extends Settings{
     options.addOption(JAR_OPTION, true, "the path to find jar file")
     options.addOption(TMP_DIR_OPTION, true, 
         "local dir for tmp files, including map output files and RDDs stored on disk")
-    options.addOption(MEMORY_OPTION, true, 
+    options.addOption(MEM_OPTION, true, 
         "amount of memory to use per executor process")
     options.addOption(NUM_ROWS_OPTION, true, "number of rows")
     options.addOption(NUM_COLS_OPTION, true, "number of cols")
@@ -134,8 +137,8 @@ object GenSynMat extends Settings{
     if (line.hasOption(TMP_DIR_OPTION)) {
       System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
     }
-    if (line.hasOption(MEMORY_OPTION)) {
-      System.setProperty("spark.executor.memory", line.getOptionValue(MEMORY_OPTION))
+    if (line.hasOption(MEM_OPTION)) {
+      System.setProperty("spark.executor.memory", line.getOptionValue(MEM_OPTION))
     }
     if (line.hasOption(NUM_REDUCERS_OPTION) || line.hasOption(NUM_CORES_OPTION)) {
       if (line.hasOption(NUM_REDUCERS_OPTION)) {
@@ -163,6 +166,11 @@ object GenSynMat extends Settings{
     val sc = new SparkContext(MODE, JOB_NAME, System.getenv("SPARK_HOME"), JARS)
     
     val sigma = 1/math.sqrt(math.sqrt(numFactors))
+    
+    def hash(x: Int): Int = {
+      val r = x ^ (x >>> 20) ^ (x >>> 12)
+      r ^ (r >>> 7) ^ (r >>> 4)
+    }
     
     //randomly partition the sparse matrix into blocks, 
     //and generate synthetic data for each block
@@ -209,8 +217,10 @@ object GenSynMat extends Settings{
     val syntheticData = rowBlocks.cartesian(colBlocks).map{
       case ((rowBID, rowFactors), (colBID, colFactors)) => {
         val time = System.currentTimeMillis()
-        val rowIndices = rowBlockMapBC.value.zipWithIndex.filter(_._1==rowBID).map(_._2)
-        val colIndices = colBlockMapBC.value.zipWithIndex.filter(_._1==colBID).map(_._2)
+        val rowIndices = 
+          rowBlockMapBC.value.zipWithIndex.filter(_._1==rowBID).map(_._2)
+        val colIndices = 
+          colBlockMapBC.value.zipWithIndex.filter(_._1==colBID).map(_._2)
         val bid = rowBID*numColBlocks + colBID
         val numRows = rowIndices.length
         val numCols = colIndices.length

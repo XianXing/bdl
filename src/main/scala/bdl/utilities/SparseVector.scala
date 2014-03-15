@@ -254,7 +254,11 @@ class SparseVector(val indices : Array[Int], val values : Array[Float])
     res
   }
   
-  def dot(that: Vector) : Float = {
+  def dot(that: Vector): Float = dot(that.elements)
+  
+  def dot(that: DoubleVector): Double = dot(that.elements)
+  
+  def dot(that: Array[Float]) : Float = {
     var res = 0.0f
     var i = 0
     while (i < size) {
@@ -265,8 +269,8 @@ class SparseVector(val indices : Array[Int], val values : Array[Float])
     res
   }
   
-  def dot(that: Array[Float]) : Float = {
-    var res = 0.0f
+  def dot(that: Array[Double]) : Double = {
+    var res = 0.0
     var i = 0
     while (i < size) {
       if (isBinary) res += that(indices(i))

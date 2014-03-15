@@ -3,6 +3,7 @@ package lr
 import java.util.Random
 import scala.collection.mutable.ArrayBuilder
 import utilities._
+import DistributedGradient._
 
 class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
   extends Serializable {
@@ -263,7 +264,8 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     }
   }
   
-  def updatePara(responses: Array[Boolean], features: SparseMatrix, prec: Array[Float],
+  def updatePara(
+      responses: Array[Boolean], features: SparseMatrix, prec: Array[Float],
       globalPara: Array[Float], coefA: Array[Float], residual: Array[Float],
       rho: Float, l1: Boolean, jaak: Boolean, emBayes: Boolean) = {
     
@@ -294,7 +296,7 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
     }
   }
   
-  def updateGamma(prior: Array[Float], prec: Array[Float], rho: Float, ard: Boolean) = {
+  def updateGamma(prior: Array[Float], prec: Array[Float], rho: Float, ard: Boolean) {
     if (ard) {
       var p = 0
       while (p < numFeatures) {
@@ -375,14 +377,14 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
   
   def runCGQN(responses: Array[Boolean], features: SparseMatrix, 
       maxIter: Int, thre: Float, cg: Boolean = true, rho: Float = 1f, 
-      admm: Boolean = false, globalPara: Array[Float] = new Array[Float](numFeatures)) 
-    = {
+      admm: Boolean = false, 
+      globalPara: Array[Float] = new Array[Float](numFeatures)) = {
     
     if (admm) updateADMM(globalPara)
     val gradient = new Array[Float](numFeatures)
-    val gradient_old = new Array[Float](numFeatures)
+    val gradientOld = new Array[Float](numFeatures)
     val direction = new Array[Float](numFeatures)
-    val delta_para = if (cg) null else new Array[Float](numFeatures)
+    val delta = if (cg) null else new Array[Float](numFeatures)
     var iter = 0
     var obj = -Double.MaxValue
     var obj_old = Double.NegativeInfinity
@@ -399,8 +401,8 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
       }
       if (iter > 1) {
         //O(P)
-        if (cg) Functions.getCGDirection(gradient, gradient_old, direction)
-        else Functions.getLBFGSDirection(delta_para, gradient, gradient_old, direction)
+        if (cg) getCGDirection(gradient, gradientOld, direction)
+        else getLBFGSDirection(delta, gradient, gradientOld, direction)
       }
       else Functions.copy(gradient, direction)
       var gu = gradient(0)*direction(0)
@@ -416,10 +418,10 @@ class Model (para: Array[Float], lag: Array[Float], gamma: Array[Float])
       hessian += h
       p = 0
       while (p < numFeatures) {
-        gradient_old(p) = gradient(p)
-        val delta = gu/h*direction(p)
-        if (!cg) delta_para(p) = delta
-        para(p) += delta
+        gradientOld(p) = gradient(p)
+        val change = gu/h*direction(p)
+        if (!cg) delta(p) = change
+        para(p) += change
         p += 1
       }
       iter += 1

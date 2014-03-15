@@ -1,8 +1,5 @@
 package tf
 
-import utilities._
-import preprocess.MF._
-
 import java.io._
 import scala.util._
 import scala.collection.mutable.ArrayBuffer
@@ -16,9 +13,16 @@ import org.apache.commons.cli._
 import org.apache.hadoop.io.NullWritable
 import org.apache.hadoop.mapred.SequenceFileOutputFormat
 
+import utilities.SparseCube
+import utilities.Settings._
+import utilities.Triplet
+import utilities.Vector
+import preprocess.MF._
+
+
 //generate synthetic tensor dataset
 
-object GenSynTensor extends Settings{
+object GenSynTensor{
   
   val numFactors = 20
   val numCores = 2

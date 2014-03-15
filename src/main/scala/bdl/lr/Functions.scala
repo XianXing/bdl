@@ -21,12 +21,13 @@ object Functions {
     else 1/(1+math.exp(-value).toFloat)
   }
   
-  def sigmoid(x : Double) : Double = {
-    1 / (1 + math.exp(-x))
+  def sigmoid(value : Double): Double = {
+    if (value < -10) 4.5398e-05
+    else if (value > 10) 1-1e-05f
+    else 1 / (1 + math.exp(-value))
   }
   
-  def getBinPred(features : SparseVector, w : Array[Float], numBins: Int)
-    : Vector = {
+  def getBinPred(features: SparseVector, w: Array[Float], numBins: Int): Vector = {
     val prob = sigmoid(features.dot(Vector(w)))
     val inc = 1.0/numBins
     Vector(Array.tabulate(numBins)(i => if (prob > (i-1)*inc) 1.0f else 0.0f ))
@@ -115,7 +116,7 @@ object Functions {
     hessian
   }
   
-  def getAUC(tpr : Array[Float], fpr : Array[Float], numPos : Int, numNeg: Int) : Float = {
+  def getAUC(tpr: Array[Float], fpr: Array[Float]): Float = {
     assert(tpr.length == fpr.length)
     var tpr_prev = 0.0f
     var fpr_prev = 0.0f
@@ -128,7 +129,7 @@ object Functions {
     auc
   }
   
-  def getLLH(data : Pair[Boolean, SparseVector], w : SparseVector) : Double = {
+  def getLLH(data: Pair[Boolean, SparseVector], w: SparseVector): Double = {
     val features = data._2
     val response = 
       if (data._1) 1
@@ -195,49 +196,7 @@ object Functions {
     return (sigma*(1 - sigma))*ux*ux
   }
   
-  def getCGDirection(gradient: Array[Float], gradient_old: Array[Float], 
-      direction: Array[Float]) = {
-    val numFeatures = gradient.length
-    var p = 0
-    var deno = 0f
-    var nume = 0f
-    while (p < numFeatures) {
-      //Hestenes-Stiefel formula:
-      val delta = gradient(p) - gradient_old(p)
-      nume += gradient(p)*delta
-      deno += direction(p)*delta
-      p += 1
-    }
-    val beta = nume/deno
-    p = 0
-    while (p < numFeatures) {
-      direction(p) = gradient(p) - direction(p)*beta
-      p += 1
-    }
-  }
   
-  def getLBFGSDirection(delta_para: Array[Float], gradient: Array[Float], 
-      gradient_old: Array[Float], direction: Array[Float]) = {
-    val numFeatures = gradient.length
-    var p = 0; var dwdg = 0f; var dgdg = 0f; var dwg = 0f; var dgg = 0f
-    while (p < numFeatures) {
-      val delta_g = gradient(p) - gradient_old(p)
-      dwdg += delta_para(p)*delta_g
-      dgdg += delta_g*delta_g
-      dwg += delta_para(p)*gradient(p)
-      dgg += delta_g*gradient(p)
-      p += 1
-    }
-    val b = 1+dgdg/dwdg
-    val a_g = dwg/dwdg
-    val a_w = dgg/dwdg - b*a_g
-    p = 0
-    while (p < numFeatures) {
-      val delta_g = gradient(p) - gradient_old(p)
-      direction(p) = -gradient(p) + a_w*delta_para(p) + a_g*delta_g
-      p += 1
-    }
-  }
   
   def dist_cg(data : Array[(Boolean, SparseVector)], w: Vector, gamma: Float,
       max_iter: Int, bayes: Boolean) : (Array[Float], Float) = {

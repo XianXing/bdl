@@ -195,7 +195,8 @@ object KDDCup2012 {
     adsStats.map(pair => (pair._1, pair._2._1))
       .foreach(pair => adFreq(adIDMap(pair._1)) = pair._2)
     val adWithClicks = new Array[Boolean](numAds)
-    adsStats.filter(_._2._1 > 0).map(_._1).foreach(i => adWithClicks(adIDMap(i)) = true)
+    adsStats.filter(_._2._1 > 0).map(_._1)
+      .foreach(i => adWithClicks(adIDMap(i)) = true)
     val adCtr = new Array[Float](numAds)
     adsStats.map{
       case(id, (click, impression)) => (id, (click+alpha*beta)/(impression + beta))
@@ -438,8 +439,8 @@ object KDDCup2012 {
       var offset = 1
       //AdCtr, D=adCtrBinDim
       if (adIDMap.contains(arr(2))) {
-        feature += 
-          math.min((adCtr(adIDMap(arr(2)))/adCtrBinSize).toInt, adCtrBinDim-1) + offset
+        feature += math.min((adCtr(adIDMap(arr(2)))/adCtrBinSize).toInt, 
+          adCtrBinDim-1) + offset
       }
       offset += adCtrBinDim
       //AdvrCtr, D=advrCtrBinDim

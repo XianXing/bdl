@@ -1,6 +1,6 @@
 package utilities
 
-trait Settings {
+object Settings {
   
   val HELP = "help"
   val STRING_INDICATOR = "string"
@@ -10,6 +10,7 @@ trait Settings {
   
   val TRAINING_OPTION = "train"
   val TESTING_OPTION = "test"
+  val VALIDATING_OPTION = "validate"
   val OUTPUT_OPTION = "output"
   val RUNNING_MODE_OPTION = "mode"
   val EXACT_OPTION = "exact"
@@ -19,11 +20,10 @@ trait Settings {
   val QN_OPTION = "qn"
   val CA_OPTION = "ca"
   val ITERATION_OPTION = "max_iter"
-  val REGULARIZER_OPTION = "lambda"
   val L1_REGULARIZATION = "l1"
   val L1_REGULARIZATION_OPTION = "l1"
   val L2_REGULARIZATION = "l2"
-  val ADMM_RHO = "rho"
+  val RHO_OPTION = "rho"
   val BADMM_GAMMA = "gamma"
   val GAMMA = "gamma"
   val ETA = "eta"
@@ -37,7 +37,7 @@ trait Settings {
   val P_OPTION = "P"
   val FEATURE_SUPPORT_THRESHOLD = "th"
   val FEATURE_THRESHOLD_OPTION = "th"
-  val NUM_CORES_OPTION = "cores"
+  val NUM_CORES_OPTION = "num_cores"
   val INTERVAL_OPTION = "interval"
   val DISTRIBUTE_FEATURES_OPTION = "distf"
   val NUM_PARTITIONS_OPTION = "parts"
@@ -121,10 +121,12 @@ trait Settings {
   val IS_OPTION = "IS"
   val NUM_SAMPLES_OPTION = "num_samples"
   val SEQUENCE_FILE_OPTION = "seq"
-  val MEMORY_OPTION = "memory"
+  val MEM_OPTION = "memory"
   val NUM_OUTPUT_BLOCKS_OPTION = "num_output_blocks"
-  def hash(x: Int): Int = {
-    val r = x ^ (x >>> 20) ^ (x >>> 12)
-    r ^ (r >>> 7) ^ (r >>> 4)
-  }
+  val REG_PARA_OPTION = "reg_para"  
+  val SUMSAMPLE_RATE_OPTION = "ss_rate"
+  val MODEL_OPTION = "model"
+  val OPTIMIZER_OPTION = "opt"
+  val REGULARIZER_OPTION = "reg"
+  val VARIATIONAL_OPTION = "var"
 }
