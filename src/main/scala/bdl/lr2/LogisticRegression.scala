@@ -2,7 +2,7 @@ package lr2
 
 import java.io._
 
-import org.apache.spark.{SparkContext, HashPartitioner}
+import org.apache.spark.{SparkContext, HashPartitioner, SparkConf}
 import org.apache.spark.SparkContext._
 import org.apache.spark.Logging
 
@@ -116,7 +116,7 @@ object LogisticRegression extends Logging{
     val subsampleRate = 
       if (line.hasOption(SUMSAMPLE_RATE_OPTION)) {
         modelType match {
-          case `sAVGM` => line.getOptionValue(SUMSAMPLE_RATE_OPTION).toDouble
+          case `sAVGM` => line.getOptionValue(SUMSAMPLE_RATE_OPTION).toFloat
           case _ => 0
         }
       }
@@ -226,9 +226,6 @@ object LogisticRegression extends Logging{
       }
     }
     
-//    System.setProperty("spark.storage.memoryFraction", "0.5")
-    System.setProperty("spark.akka.frameSize", "64") //for large .collect() objects
-    
     var jobName = "LR_"
     
     modelType match {
@@ -275,8 +272,18 @@ object LogisticRegression extends Logging{
       "_b_" + numSlices + "_th_" + featureThre
     val logPath = outputDir + jobName + ".txt"
     
-    val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
-    val sc = new SparkContext(mode, jobName, System.getenv("SPARK_HOME"), jars)
+    val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))    
+    val conf = new SparkConf()
+//      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+//      .set("spark.kryo.registrator",  classOf[utilities.Registrator].getName)
+//      .set("spark.kryo.referenceTracking", "false")
+//      .set("spark.kryoserializer.buffer.mb", "8")
+      .set("spark.locality.wait", "10000")
+      .set("spark.akka.frameSize", "64")
+//      .set("spark.storage.memoryFraction", "0.5")
+      .setJars(jars)
+      .setSparkHome(System.getenv("SPARK_HOME"))
+    val sc = new SparkContext(mode, jobName, conf)
     
     val featurePartitioner = new HashPartitioner(numReducers)
     val dataPartitioner = new HashPartitioner(numSlices)
@@ -293,54 +300,26 @@ object LogisticRegression extends Logging{
       if (featureThre > 0) sc.broadcast(featureSet.zipWithIndex.toMap)
       else null
     
-    val trainingData = rawTrainingData.map(line => {
-      val bid = (math.random*numSlices).toInt
-      if (featureThre > 0) (bid, parseLine(line, featureMapBC.value, isBinary))
-      else (bid, parseLine(line, isBinary))
-    })
-    .groupByKey(dataPartitioner)
-    .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
-    .cache
+    val trainingData = toSparseMatrix(trainingDataDir, sc, featureMapBC, 
+        dataPartitioner, numSlices, featureThre, isBinary, isSeq).cache
     
     def hash(x: Int): Int = {
       val r = x ^ (x >>> 20) ^ (x >>> 12)
       r ^ (r >>> 7) ^ (r >>> 4)
     }
     val seed = hash(1234567890)
-    val subsampledTrainingData = 
-      if (subsampleRate > 0) {
-        sc.textFile(trainingDataDir).sample(false, subsampleRate, seed).map(line => {
-          val bid = (math.random*numSlices).toInt
-          if (featureThre > 0) (bid, parseLine(line, featureMapBC.value, isBinary))
-          else (bid, parseLine(line, isBinary))
-        })
-      }
-    .groupByKey(dataPartitioner)
-    .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
-    .cache 
-    else null
+    
+    val subsampledTrainingData = toSparseMatrix(trainingDataDir, sc, featureMapBC, 
+        dataPartitioner, numSlices, featureThre, isBinary, isSeq, subsampleRate, seed)
+        .cache
     
     val splitsStats = trainingData.mapValues{
       case(responses, features) => (responses.length, features.rowMap.length)
     }.collect
     
-    val validatingData = 
-      if (isSeq) {
-        if (isBinary) {
-          sc.objectFile[Array[Int]](validatingDataDir).map(arr => {
-            if (featureThre > 0) parseArr(arr, featureMapBC.value)
-            else parseArr(arr)
-          })
-        }
-        else null
-      }
-      else {
-        sc.textFile(validatingDataDir).map(line => {
-          if (featureThre > 0) parseLine(line, featureMapBC.value, isBinary)
-          else parseLine(line, isBinary)
-       })
-      }
-    validatingData.cache
+    val validatingData = toSparseVector(validatingDataDir, sc, featureMapBC, 
+      numSlices, featureThre, isBinary, isSeq).map(_._2).cache
+      
     val valiPos = validatingData.filter(_._1 == 1).map(_._2).cache
     val valiNeg = validatingData.filter(_._1 == -1).map(_._2).cache
     

@@ -3,7 +3,8 @@ package mf2
 import scala.util.{Random, Sorting}
 import scala.collection.mutable.{BitSet, ArrayBuffer}
 
-import org.apache.spark.{SparkContext, HashPartitioner}
+import org.apache.spark.{SparkContext, Partitioner, HashPartitioner}
+import org.apache.spark.storage.StorageLevel._
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
 
@@ -25,11 +26,9 @@ class DistributedGradient(
     val colFactors: RDD[(Int, Array[Float])],
     val rowBlockedParas: RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))],
     val colBlockedParas: RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))],
-    val rowInLinkBlocks: RDD[(Int, InLinkBlock)],
-    val rowOutLinkBlocks: RDD[(Int, OutLinkBlock)],
-    val colInLinkBlocks: RDD[(Int, InLinkBlock)],
-    val colOutLinkBlocks: RDD[(Int, OutLinkBlock)],
-    val partitioner: HashPartitioner,
+    val rowLinkBlocks: RDD[(Int, (InLinkBlock, OutLinkBlock))],
+    val colLinkBlocks: RDD[(Int, (InLinkBlock, OutLinkBlock))],
+    val partitioner: Partitioner,
     val validatingData: RDD[(Int, SparseMatrix)], val nnzVal: Int,
     val rowValIDToSend: RDD[(Int, Array[Int])],
     val colValIDToSend: RDD[(Int, Array[Int])],
@@ -42,9 +41,8 @@ class DistributedGradient(
     colBlockedParas: RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))])
     : DistributedGradient = {
     new DistributedGradient(rowFactors, colFactors, rowBlockedParas, colBlockedParas,
-        rowInLinkBlocks, rowOutLinkBlocks, colInLinkBlocks, colOutLinkBlocks, 
-        partitioner, validatingData, nnzVal, rowValIDToSend, colValIDToSend,
-        numFactors, isVB)
+        rowLinkBlocks, colLinkBlocks, partitioner, 
+        validatingData, nnzVal, rowValIDToSend, colValIDToSend, numFactors, isVB)
   }
   
   override def init(numIter: Int, optType: OptimizerType, 
@@ -57,6 +55,10 @@ class DistributedGradient(
     
     var oldRowParas = rowBlockedParas
     var oldColParas = colBlockedParas
+    val rowInLinkBlocks = rowLinkBlocks.mapValues(_._1)
+    val rowOutLinkBlocks = rowLinkBlocks.mapValues(_._2)
+    val colInLinkBlocks = colLinkBlocks.mapValues(_._1)
+    val colOutLinkBlocks = colLinkBlocks.mapValues(_._2)
     for (iter <- 1 to numIter) {
       val updatedColParas = DistributedGradient.update(oldRowParas, rowOutLinkBlocks, 
         oldColParas, colInLinkBlocks, partitioner, isVB, numFactors, regPara, optType)
@@ -93,22 +95,29 @@ class DistributedGradient(
 
 object DistributedGradient{
   
+  private val storageLevel = MEMORY_AND_DISK
+  
   def apply(sc: SparkContext, trainingDir: String, validatingDir: String,
       mean: Float, scale: Float, syn: Boolean, numBlocks: Int, numFactors: Int, 
       regPara: Float, isVB: Boolean): DistributedGradient = {
     
     val trainingRecords = 
-      DistributedGradient.toRecords(sc, trainingDir, mean, scale).cache
+      DistributedGradient.toRecords(sc, trainingDir, numBlocks, syn, mean, scale)
+      .persist(storageLevel)
     val partitioner = new HashPartitioner(numBlocks)
     val recordsByRowBlock = trainingRecords.map{
       record => (record.rowIdx % numBlocks, record) 
-    }
+    }.groupByKey(partitioner)
     val recordsByColBlock = trainingRecords.map{ 
       record => (record.colIdx % numBlocks, 
           new Record(record.colIdx, record.rowIdx, record.value))
-    }
-    val (rowInLinks, rowOutLinks) = makeLinkRDDs(numBlocks, recordsByRowBlock)
-    val (colInLinks, colOutLinks) = makeLinkRDDs(numBlocks, recordsByColBlock)
+    }.groupByKey(partitioner)
+    val rowLinks = makeLinkRDDs(numBlocks, recordsByRowBlock).persist(storageLevel)
+    val rowInLinks = rowLinks.mapValues(_._1)
+    val rowOutLinks = rowLinks.mapValues(_._2)
+    val colLinks = makeLinkRDDs(numBlocks, recordsByColBlock).persist(storageLevel)
+    val colInLinks = colLinks.mapValues(_._1)
+    val colOutLinks = colLinks.mapValues(_._2)
     val seedGen = new Random()
     val rowSeed = seedGen.nextInt()
     val colSeed = seedGen.nextInt()
@@ -124,12 +133,14 @@ object DistributedGradient{
     colBlockedParas.count
     val rowFactors = unblockFactors(rowBlockedParas, rowOutLinks)
     val colFactors = unblockFactors(colBlockedParas, colOutLinks)
-    val numRows = rowOutLinks.map{case(id, outlink) => 
-      outlink.elementIds(outlink.elementIds.length-1)
+    val numRows = rowInLinks.map{case(id, inlink) => 
+      inlink.elementIds(inlink.elementIds.length-1)
     }.reduce(math.max(_, _))
-    val numCols = colOutLinks.map{case(id, outlink) => 
-      outlink.elementIds(outlink.elementIds.length-1)
+    println("num rows:" + numRows)
+    val numCols = colInLinks.map{case(id, inlink) => 
+      inlink.elementIds(inlink.elementIds.length-1)
     }.reduce(math.max(_, _))
+    println("num cols:" + numCols)
     val numRowBlocks = math.sqrt(numBlocks).toInt
     val numColBlocks = numBlocks/numRowBlocks
     val rowBlockMap = 
@@ -147,9 +158,9 @@ object DistributedGradient{
     val colValIDToSend = validatingData.flatMap{
       case (pid, data) => data.colMap.map((_, List(pid)))
     }.reduceByKey(_:::_).mapValues(_.toArray).cache
-    
+    trainingRecords.unpersist(true)
     new DistributedGradient(rowFactors, colFactors, rowBlockedParas, colBlockedParas,
-        rowInLinks, rowOutLinks, colInLinks, colOutLinks, partitioner,
+        rowLinks, colLinks, partitioner,
         validatingData, nnzVal, rowValIDToSend, colValIDToSend, numFactors, isVB)
   }
   
@@ -192,26 +203,33 @@ object DistributedGradient{
     OutLinkBlock(rowIds, shouldSend)
   }
   
-  private def makeLinkRDDs(numBlocks: Int, ratings: RDD[(Int, Record)])
-    : (RDD[(Int, InLinkBlock)], RDD[(Int, OutLinkBlock)]) = {
-    val grouped = ratings.partitionBy(new HashPartitioner(numBlocks))
-    val links = grouped.mapPartitionsWithIndex((blockId, elements) => {
-      val record = elements.map(_._2).toArray
-      val inLinkBlock = makeInLinkBlock(numBlocks, record)
-      val outLinkBlock = makeOutLinkBlock(numBlocks, record)
-      Iterator.single((blockId, (inLinkBlock, outLinkBlock)))
-    }, true).cache
-    (links.mapValues(_._1), links.mapValues(_._2))
+  private def makeLinkRDDs(numBlocks: Int, groupedRecords: RDD[(Int, Seq[Record])])
+    : RDD[(Int, (InLinkBlock, OutLinkBlock))] = {
+    groupedRecords.mapValues(records => {
+      val recordsArr = records.toArray
+      val inLinkBlock = makeInLinkBlock(numBlocks, recordsArr)
+      val outLinkBlock = makeOutLinkBlock(numBlocks, recordsArr)
+      (inLinkBlock, outLinkBlock)
+    })
   }
   
-  private def toRecords(sc: SparkContext, inputDir: String, mean: Float, scale: Float)
+  private def toRecords(sc: SparkContext, inputDir: String, numBlocks: Int, 
+      syn: Boolean, mean: Float, scale: Float)
     : RDD[Record] = {
-    if (inputDir.toLowerCase().contains("ml")) {
-       sc.sequenceFile[NullWritable, Record](inputDir)
-         .map(pair => 
-           new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
+    if (syn) {
+      sc.objectFile[((Int, Int), 
+          (Array[Int], Array[Int], Array[Float]))](inputDir, numBlocks)
+      .flatMap{case(id, (rowIndices, colIndices, values)) => 
+        (rowIndices.view.zip(colIndices)).view.zip(values).map{
+           case((rowIdx, colIdx), value) => new Record(rowIdx, colIdx, value-mean)
+        }
+      }
+    }
+    else if (inputDir.toLowerCase().contains("ml")) {
+      sc.sequenceFile[NullWritable, Record](inputDir, numBlocks).map(pair => 
+        new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
     } else {
-      sc.textFile(inputDir).flatMap(line => parseLine(line, mean, scale))
+      sc.textFile(inputDir, numBlocks).flatMap(line => parseLine(line, mean, scale))
     }
   }
   
@@ -221,7 +239,7 @@ object DistributedGradient{
       colOutLinks: RDD[(Int, OutLinkBlock)],
       rowBlockedParas: RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))],
       rowInLinks: RDD[(Int, InLinkBlock)],
-      partitioner: HashPartitioner,
+      partitioner: Partitioner,
       isVB: Boolean,
       numFactors: Int,
       regPara: Float,
@@ -319,7 +337,7 @@ object DistributedGradient{
       var p = 0
       while (p < colFactors.length) {
         val colFactor = colFactors(p)
-        val (rowIDs, rowValues) = rowInLink.ratingsForBlock(bid)(p)
+        val (rowIDs, rowValues) = rowInLink.ratingsForBlock(bid)(p) 
         val res = residuals(bid)(p)
         var i = 0
         while (i < rowIDs.length) {

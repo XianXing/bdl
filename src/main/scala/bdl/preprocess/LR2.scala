@@ -1,9 +1,48 @@
 package preprocess
 
+import org.apache.spark.SparkContext._
+import org.apache.spark.rdd.RDD
+import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.broadcast.Broadcast
+
 import utilities.SparseVector
+import utilities.SparseMatrix
 
 //preprocess for the logistic regression model
 object LR2 {
+  
+  def toSparseVector(inputDir: String, sc: SparkContext, 
+      featureMap: Broadcast[Map[Int,Int]], numSlices: Int, 
+      featureThre: Int, isBinary: Boolean, isSeq: Boolean, fraction: Float = 1,
+      seed: Int = 1): RDD[(Int, (Byte, SparseVector))]= {
+    isSeq match {
+      case true => {
+        sc.objectFile[Array[Int]](inputDir).sample(false, fraction, seed).map(arr => {
+          val bid = (math.random*numSlices).toInt
+          if (featureThre > 0) (bid, parseArr(arr, featureMap.value))
+          else (bid, parseArr(arr))
+        })
+      }
+      case false => {
+        sc.textFile(inputDir).sample(false, fraction, seed).map(line => {
+          val bid = (math.random*numSlices).toInt
+          if (featureThre > 0) (bid, parseLine(line, featureMap.value, isBinary))
+          else (bid, parseLine(line, isBinary))
+        })
+      }
+    }
+  }
+  
+  def toSparseMatrix(inputDir: String, sc: SparkContext, 
+      featureMap: Broadcast[Map[Int,Int]], part: Partitioner, numSlices: Int, 
+      featureThre: Int, isBinary: Boolean, isSeq: Boolean, fraction: Float = 1,
+      seed: Int = 1): RDD[(Int, (Array[Byte], SparseMatrix))]= {
+    
+    toSparseVector(inputDir, sc, featureMap, numSlices, featureThre, isBinary, isSeq,
+      fraction, seed)
+    .groupByKey(part)
+    .mapValues(seq => (seq.map(_._1).toArray, SparseMatrix(seq.map(_._2).toArray)))
+  }
   
   def parseResponse(string: String): Byte = {
     if (string.startsWith("+")) 1

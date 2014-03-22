@@ -26,19 +26,19 @@ object PMF {
     if (seq) "output/test_Syn_M_5000_N_5000_K_10_spa_0.1_tr_0.9_lam_100.0" 
     else "input/ml-1m/mf_test"
   val outputDir = "output/"
-  val modelType = dGM
+  val modelType = ADMM
   val optType = CD
   val regType = Trace
-  val isVB = false
+  val regPara = 1f
+  val isVB = true
   val ec = true
   val numCores = 1
-  val numRowBlocks = 2
-  val numColBlocks = 2
+  val numRowBlocks = 1
+  val numColBlocks = 4
   val gammaRInit = 1f
   val gammaCInit = 1f
-  val regPara = 10f
   val numOuterIter = 10
-  val numInnerIter = 1
+  val numInnerIter = 10
   val numFactors = 20
   
   //for each movie, numRows = 1621, numCols = 55423, mean: 4.037181f
@@ -213,7 +213,7 @@ object PMF {
         line.getOptionValue(NUM_SLICES_OPTION).toInt
       else numRowBlocks*numColBlocks
     val multicore = line.hasOption(MULTICORE_OPTION) || 
-        (line.hasOption(NUM_CORES_OPTION) && numCores > numSlices)
+        (line.hasOption(NUM_CORES_OPTION) && numCores > 2*numSlices)
     val seq = line.hasOption(SEQUENCE_FILE_OPTION)
     if (line.hasOption(TMP_DIR_OPTION)) {
       System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
@@ -228,9 +228,10 @@ object PMF {
       }
       else {
         System.setProperty("spark.default.parallelism", 
-          line.getOptionValue(NUM_CORES_OPTION))
+          line.getOptionValue(NUM_CORES_OPTION)*4)
       }
     }
+    
     
     var jobName = "MF"
     modelType match {
@@ -255,6 +256,7 @@ object PMF {
       case Max => jobName += "_max"
     }
     jobName += "_reg_" + regPara
+    if (multicore) jobName += "_multicore"
     
     val logPath = outputDir + jobName + ".txt"
     
@@ -262,15 +264,17 @@ object PMF {
     
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
     val conf = new SparkConf()
-      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-      .set("spark.kryo.registrator",  classOf[utilities.Registrator].getName)
-      .set("spark.kryo.referenceTracking", "false")
-      .set("spark.kryoserializer.buffer.mb", "8")
+//      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+//      .set("spark.kryo.registrator",  classOf[utilities.Registrator].getName)
+//      .set("spark.kryo.referenceTracking", "false")
+//      .set("spark.kryoserializer.buffer.mb", "64")
       .set("spark.locality.wait", "10000")
       .set("spark.akka.frameSize", "64")
+      .setJars(jars)
+//      .setSparkHome(System.getenv("SPARK_HOME"))
     val sc = new SparkContext(mode, jobName, conf)
     
-    val emBayes = true
+    val emBayes = isVB
     var model = modelType match {
       case `dGM` => DistributedGradient(sc, trainingDir, testingDir,
       mean, scale, seq, numSlices, numFactors, regPara, isVB)
