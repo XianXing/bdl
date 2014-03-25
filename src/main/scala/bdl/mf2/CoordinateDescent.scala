@@ -69,7 +69,7 @@ object CoordinateDescent {
         cols.par.map(c => {
           var k = 0
           while (k<numFactors) {
-            val prior = if (hasPriorsC) priorsC(c)(k) else 0
+            val prior = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
             if (isVB) {
               update(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                 prior, gammaC(k), factorsC(k), precsC(k))
@@ -87,7 +87,7 @@ object CoordinateDescent {
         rows.par.map(r => {
           var k = 0
           while (k<numFactors) {
-            val prior = if (hasPriorsR) priorsR(r)(k) else 0
+            val prior = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
             if (isVB) {
               update(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                 prior, gammaR(k), factorsR(k), precsR(k))
@@ -108,7 +108,7 @@ object CoordinateDescent {
         while (c < numCols) {
           var k = 0
           while (k<numFactors) {
-            val prior = if (hasPriorsC) priorsC(c)(k) else 0
+            val prior = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
             if (isVB) {
               update(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                 prior, gammaC(k), factorsC(k), precsC(k))
@@ -127,7 +127,7 @@ object CoordinateDescent {
         while (r < numRows) {
           var k = 0
           while (k<numFactors) {
-            val prior = if (hasPriorsR) priorsR(r)(k) else 0
+            val prior = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
             if (isVB) {
               update(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                 prior, gammaR(k), factorsR(k), precsR(k))
@@ -185,9 +185,9 @@ object CoordinateDescent {
       priorsC: Array[Array[Float]], factorsC: Array[Array[Float]], 
       precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
     
+    val isVB = precsR != null && precsC != null
     val hasPriorsR = priorsR != null
     val hasPriorsC = priorsC != null
-    val isVB = precsR != null && precsC != null
     //priors are M*K and N*K respectively, while factors are K*M and K*N respectively
     val numFactors = factorsR.length
     val numRows = factorsR(0).length
@@ -213,7 +213,7 @@ object CoordinateDescent {
         while (i < numInnerIter) {
           if (multicore) {
             cols.par.map(c => {
-              val priorC = if (hasPriorsC) priorsC(c)(k) else 0
+              val priorC = if (hasPriorsC && priorsC(c)!=null) priorsC(c)(k) else 0
               if (isVB) {
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                   priorC, gammaC(k), factorsC(k), precsC(k))
@@ -224,7 +224,7 @@ object CoordinateDescent {
               }
             })
             rows.par.map(r => {
-              val priorR = if (hasPriorsR) priorsR(r)(k) else 0
+              val priorR = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
               if (isVB) {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                   priorR, gammaR(k), factorsR(k), precsR(k))
@@ -238,7 +238,7 @@ object CoordinateDescent {
           else {
             var c = 0
             while (c < numCols) {
-              val priorC = if (hasPriorsC) priorsC(c)(k) else 0
+              val priorC = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
               if (isVB) {
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                   priorC, gammaC(k), factorsC(k), precsC(k))
@@ -251,7 +251,7 @@ object CoordinateDescent {
             }
             var r = 0
             while (r < numRows) {
-              val priorR = if (hasPriorsR) priorsR(r)(k) else 0
+              val priorR = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
               if (isVB) {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                   priorR, gammaR(k), factorsR(k), precsR(k))
@@ -451,7 +451,9 @@ object CoordinateDescent {
       var r = 0
       var denominator = 0f
       while (r < numRows) {
-        val res = if (priors == null) means(k)(r) else means(k)(r) - priors(r)(k)
+        val res = 
+          if (priors == null || priors(r) == null) means(k)(r) 
+          else means(k)(r) - priors(r)(k)
         denominator += res*res + 1/precisions(k)(r)
         r += 1
       }

@@ -2,6 +2,8 @@ package lr2
 
 import java.io._
 
+import scala.collection.mutable.ArrayBuilder
+
 import org.apache.spark.{SparkContext, HashPartitioner, SparkConf}
 import org.apache.spark.SparkContext._
 import org.apache.spark.Logging
@@ -270,9 +272,12 @@ object LogisticRegression extends Logging{
     }
     jobName +=  "oi_" + maxOuterIter + "_ii_" + numInnerIter + "_reg_" + regPara  + 
       "_b_" + numSlices + "_th_" + featureThre
-    val logPath = outputDir + jobName + ".txt"
-    
-    val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))    
+    val logPath = outputDir + jobName + "_LOG" + ".txt"
+    val aucs = new ArrayBuilder.ofDouble
+    val times = new ArrayBuilder.ofDouble
+    val resultPath = outputDir + jobName + "_Result" + ".txt"
+    val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
+    val bwResult = new BufferedWriter(new FileWriter(new File(resultPath)))
     val conf = new SparkConf()
 //      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 //      .set("spark.kryo.registrator",  classOf[utilities.Registrator].getName)
@@ -399,6 +404,8 @@ object LogisticRegression extends Logging{
       val obj = Functions.calculateOBJ(sc, trainingData, weights, regPara, regType)
       val aveL1Norm = Functions.getL1Norm(weights)/weights.length
       val time = (System.currentTimeMillis() - iterTime)*0.001
+      aucs += auc
+      times += time
       logInfo("Iter: " + iter + " time elapsed: " + time + " AUC: " + auc +
           " llh: " + llh + " obj: " + obj)
       logInfo("Ave L1 norm: " + aveL1Norm)
@@ -423,6 +430,9 @@ object LogisticRegression extends Logging{
       println("global: " + str)
       bwLog.write("global: " + str + '\n')
     }
+    bwResult.write(aucs.result.mkString("[", ", ", "];") + '\n')
+    bwResult.write(times.result.mkString("[", ", ", "];") + '\n')
+    bwResult.close()
     bwLog.write("Total time elapsed " + 
         (System.currentTimeMillis()-currentTime)*0.001 + "(s)\n")
     bwLog.close()

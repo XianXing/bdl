@@ -12,7 +12,7 @@ object LossType extends Enumeration with Serializable {
 
 object RegularizerType extends Enumeration with Serializable {
   type RegularizerType = Value
-  val Trace, Max = Value
+  val L2, L1, Max = Value
 }
 
 object ModelType extends Enumeration with Serializable {

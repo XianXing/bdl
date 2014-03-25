@@ -176,24 +176,28 @@ object LocalModel {
     val numRows = priorsR.length
     if (multicore) {
       for (r <- (0 until numRows).par) {
-        var k = 0
-        while (k < numFactors) {
-          lagsR(k)(r) += factorsR(k)(r) - priorsR(r)(k)
-          priorsR(r)(k) -= lagsR(k)(r)
-          k += 1
+        if (priorsR(r) != null) {
+          var k = 0
+          while (k < numFactors) {
+            lagsR(k)(r) += factorsR(k)(r) - priorsR(r)(k)
+            priorsR(r)(k) -= lagsR(k)(r)
+            k += 1
+          }
         }
       }
     }
     else {
-      var k = 0
-      while (k < numFactors) {
-        var r = 0
-        while (r < numRows) {
-          lagsR(k)(r) += factorsR(k)(r) - priorsR(r)(k)
-          priorsR(r)(k) -= lagsR(k)(r)
-          r+=1
+      var r = 0
+      while (r < numRows) {
+        if (priorsR(r) != null) {
+          var k = 0
+          while (k < numFactors) {
+            lagsR(k)(r) += factorsR(k)(r) - priorsR(r)(k)
+            priorsR(r)(k) -= lagsR(k)(r)
+            k += 1
+          }
         }
-        k += 1
+        r += 1
       }
     }
   } //end of updateLag

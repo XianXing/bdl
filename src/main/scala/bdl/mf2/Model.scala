@@ -21,14 +21,14 @@ class Model (val factorsR: RDD[(Int, Array[Float])],
   
   def getValidatingRMSE(global: Boolean): Double = 0
   
-  def distributeFactorsR(pids: RDD[(Int, Array[Int])])
+  def distributeFactorsR(pids: RDD[(Int, Array[Int])], part: Partitioner)
     : RDD[(Int, Array[(Int, Array[Float])])] = {
-    Model.distribute(factorsR, pids)
+    Model.distribute(factorsR, pids, part)
   }
   
-  def distributeFactorsC(pids: RDD[(Int, Array[Int])])
+  def distributeFactorsC(pids: RDD[(Int, Array[Int])], part: Partitioner)
     : RDD[(Int, Array[(Int, Array[Float])])] = {
-    Model.distribute(factorsC, pids)
+    Model.distribute(factorsC, pids, part)
   }
   
   def getFactorsRL2Norm = Model.getL2Norm(factorsR)
@@ -41,18 +41,19 @@ class Model (val factorsR: RDD[(Int, Array[Float])],
 
 private object Model {
   
-  def distribute(factors: RDD[(Int, Array[Float])], pids: RDD[(Int, Array[Int])])
-    : RDD[(Int, Array[(Int, Array[Float])])] = {
+  def distribute(factors: RDD[(Int, Array[Float])], pids: RDD[(Int, Array[Int])],
+    part: Partitioner): RDD[(Int, Array[(Int, Array[Float])])] = {
     factors.join(pids).flatMap{
       case(idx, (factor, pids)) => pids.map(id => (id, (idx, factor)))
-    }.groupByKey.mapValues(seq => (seq.toArray).sortBy(_._1))
+    }.groupByKey(part).mapValues(seq => (seq.toArray).sortBy(_._1))
   }
   
   def getGlobalRMSE(data: RDD[(Int, SparseMatrix)], nnz: Int, 
       factorsR: RDD[(Int, Array[Float])], factorsC: RDD[(Int, Array[Float])],
       pidsR: RDD[(Int, Array[Int])], pidsC: RDD[(Int, Array[Int])]): Double = {
-    math.sqrt(getSE(data, Model.distribute(factorsR, pidsR), 
-      Model.distribute(factorsC, pidsC))/nnz)
+    val part = data.partitioner.get
+    math.sqrt(getSE(data, Model.distribute(factorsR, pidsR, part), 
+      Model.distribute(factorsC, pidsC, part))/nnz)
   }
   
   def getLocalRMSE(data: RDD[(Int, SparseMatrix)], nnz: Int,
@@ -72,8 +73,10 @@ private object Model {
       factorsC: RDD[(Int, Array[(Int, Array[Float])])]) = {
     data.join(factorsR.join(factorsC)).map{
       case (pid, (localData, (localFactorsR, localFactorsC))) =>
-        localData.getSE(DivideAndConquer.toLocal(localFactorsR, localData.rowMap), 
-          DivideAndConquer.toLocal(localFactorsC, localData.colMap))
+        val numFactors = localFactorsR(0)._2.length
+        val zero = new Array[Float](numFactors)
+        localData.getSE(DivideAndConquer.toLocal(localFactorsR, localData.rowMap, zero),
+          DivideAndConquer.toLocal(localFactorsC, localData.colMap, zero))
     }.reduce(_+_)
   }
   

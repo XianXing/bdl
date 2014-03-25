@@ -97,19 +97,6 @@ object MF {
     .mapValues(buf => SparseMatrix(buf.toArray))
   }
   
-  def getPartitionedData(records: RDD[Record], numColBlocks: Int,
-      rowPartitionMapBC: Broadcast[Array[Byte]], 
-      colPartitionMapBC: Broadcast[Array[Byte]], numReducers: Int)
-    : RDD[(Int, SparseMatrix)] = {
-    records.mapPartitions(_.map(record => {
-      val rowPartitionMap = rowPartitionMapBC.value
-      val colPartitionMap = colPartitionMapBC.value
-      val rowPID = rowPartitionMap(record.rowIdx)
-      val colPID = colPartitionMap(record.colIdx)
-      (rowPID*numColBlocks + colPID, record)
-    })).groupByKey(numReducers).mapValues(buf => SparseMatrix(buf.toArray))
-  }
-  
   def getPartitionedData(
       data: RDD[((Int, Int), (Array[Int], Array[Int], Array[Float]))],
       numRowBlocks: Int, numColBlocks: Int, partitioner: Partitioner) = {

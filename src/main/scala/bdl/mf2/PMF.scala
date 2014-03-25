@@ -26,17 +26,15 @@ object PMF {
     if (seq) "output/test_Syn_M_5000_N_5000_K_10_spa_0.1_tr_0.9_lam_100.0" 
     else "input/ml-1m/mf_test"
   val outputDir = "output/"
-  val modelType = ADMM
-  val optType = CD
-  val regType = Trace
+  val modelType = AVGM
+  val optType = CDPP
+  val regType = L2
   val regPara = 1f
-  val isVB = true
-  val ec = true
   val numCores = 1
-  val numRowBlocks = 1
-  val numColBlocks = 4
-  val gammaRInit = 1f
-  val gammaCInit = 1f
+  val numRowBlocks = 2
+  val numColBlocks = 2
+  val gammaRInit = 10f
+  val gammaCInit = 10f
   val numOuterIter = 10
   val numInnerIter = 10
   val numFactors = 20
@@ -47,15 +45,12 @@ object PMF {
   val mean = if (seq) 0f else 3.7668543f
   val scale = 1
   val numSlices = numRowBlocks*numColBlocks
-  val ecR = ec && numColBlocks > 1
-  val ecC = ec && numRowBlocks > 1
   val mode = "local[" + numCores + "]"
   val jars = Seq("sparkproject.jar")
-  val multicore = numCores > numSlices
-  val interval = 1
+  val multicore = numCores >= 2*numSlices
   
   def main(args : Array[String]) {
-    val currentTime = System.currentTimeMillis()
+    val startTime = System.currentTimeMillis()
     
     val options = new Options()
     options.addOption(HELP, false, "print the help message")
@@ -69,14 +64,12 @@ object PMF {
     options.addOption(NUM_SLICES_OPTION, true, "number of slices of the data")
     options.addOption(OUTER_ITERATION_OPTION, true, "max number of outer iterations")
     options.addOption(INNER_ITERATION_OPTION, true, "max number of inner iterations")
-    options.addOption(VB_INFERENCE_OPTION, false, "Variational Bayesian inference")
-    options.addOption(ADMM_OPTION, false, "Equality constraint option")
     options.addOption(NUM_COL_BLOCKS_OPTION, true, "number of column blocks")
     options.addOption(NUM_ROW_BLOCKS_OPTION, true, "number of row blocks")
     options.addOption(REG_PARA_OPTION, true, "set the regularization parameter")
     options.addOption(OPTIMIZER_OPTION, true, "optimizer type (e.g. ALS, CD)")
-    options.addOption(REGULARIZER_OPTION, true, "regularizer type (e.g. Trace, Max)")
-    options.addOption(MODEL_OPTION, true, "model type  (e.g. dac, dgm)")
+    options.addOption(REGULARIZER_OPTION, true, "regu type (e.g. L1, L2, Max)")
+    options.addOption(MODEL_OPTION, true, "model type  (e.g. admm, hecmem, dgm)")
     options.addOption(GAMMA_R_INIT_OPTION, true, "initial guess for gammaR")
     options.addOption(GAMMA_C_INIT_OPTION, true, "initial guess for gammaC")
     options.addOption(NUM_LATENT_FACTORS_OPTION, true, "number of latent factors")
@@ -104,6 +97,7 @@ object PMF {
     assert(line.hasOption(TRAINING_OPTION), "training data path not specified")
     assert(line.hasOption(TESTING_OPTION), "testing data path not specified")
     assert(line.hasOption(JAR_OPTION), "running jar file path not specified")
+    assert(line.hasOption(MODEL_OPTION), "model type not specified")
     
     val mode = line.getOptionValue(RUNNING_MODE_OPTION)
     val trainingDir = line.getOptionValue(TRAINING_OPTION)
@@ -117,14 +111,21 @@ object PMF {
           line.getOptionValue(OUTPUT_OPTION)
       else
         "output" + PATH_SEPERATOR
-    val modelType = 
-      if (line.hasOption(MODEL_OPTION)) {
-        line.getOptionValue(MODEL_OPTION).toLowerCase match {
-          case "dgm" => `dGM`
-          case _ => ADMM
+    val modelType = {
+      val name = line.getOptionValue(MODEL_OPTION)
+      name.toLowerCase match {
+        case "avgm" => AVGM
+        case "admm" => ADMM
+        case "mem" => MEM
+        case "hmem" => hMEM
+        case "hecmem" => hecMEM
+        case "dgm" => dGM
+        case _ => {
+          assert(false, "unexpected model type: " + name)
+          null
         }
       }
-      else ADMM
+    }
     val optType = 
       if (line.hasOption(OPTIMIZER_OPTION)) {
         val name = line.getOptionValue(OPTIMIZER_OPTION)
@@ -140,10 +141,12 @@ object PMF {
       }
       else CDPP
     val regType = 
-      if (line.hasOption(REGULARIZER_OPTION)){
+      if (line.hasOption(REGULARIZER_OPTION) 
+          && modelType != MEM && modelType != AVGM){
         val name = line.getOptionValue(REGULARIZER_OPTION)
         name.toLowerCase match {
-          case "trace" => Trace
+          case "l1" => L1
+          case "l2" => L2
           case "max" => Max
           case _ => {
             assert(false, "unexpected regularizer type: " + name)
@@ -151,7 +154,11 @@ object PMF {
           }
         }
       }
-      else Trace
+      else L2
+    val regPara = 
+      if (line.hasOption(REG_PARA_OPTION) && modelType != MEM && modelType != AVGM)
+        line.getOptionValue(REG_PARA_OPTION).toFloat
+      else 0f
     val mean = 
       if (line.hasOption(MEAN_OPTION))
         line.getOptionValue(MEAN_OPTION).toFloat
@@ -180,18 +187,14 @@ object PMF {
       if (line.hasOption(INNER_ITERATION_OPTION))
         line.getOptionValue(INNER_ITERATION_OPTION).toInt
       else 5
-    val isVB = line.hasOption(VB_INFERENCE_OPTION)
-    val ec = line.hasOption(ADMM_OPTION)
     val numRowBlocks = 
       if (line.hasOption(NUM_ROW_BLOCKS_OPTION)) 
         line.getOptionValue(NUM_ROW_BLOCKS_OPTION).toInt
       else 1
-    val ecC = ec && numRowBlocks>1
     val numColBlocks = 
       if (line.hasOption(NUM_COL_BLOCKS_OPTION)) 
         line.getOptionValue(NUM_COL_BLOCKS_OPTION).toInt
       else 1
-    val ecR = ec && numColBlocks>1
     val gammaRInit = 
       if (line.hasOption(GAMMA_R_INIT_OPTION))
         line.getOptionValue(GAMMA_R_INIT_OPTION).toFloat
@@ -200,10 +203,6 @@ object PMF {
       if (line.hasOption(GAMMA_C_INIT_OPTION))
         line.getOptionValue(GAMMA_C_INIT_OPTION).toFloat
       else 10f
-    val regPara = 
-      if (line.hasOption(REG_PARA_OPTION))
-        line.getOptionValue(REG_PARA_OPTION).toFloat
-      else 0f
     val numFactors = 
       if (line.hasOption(NUM_LATENT_FACTORS_OPTION)) 
         line.getOptionValue(NUM_LATENT_FACTORS_OPTION).toInt
@@ -227,42 +226,62 @@ object PMF {
           line.getOptionValue(NUM_REDUCERS_OPTION))
       }
       else {
-        System.setProperty("spark.default.parallelism", 
-          line.getOptionValue(NUM_CORES_OPTION)*4)
+        System.setProperty("spark.default.parallelism", (numCores*4).toString)
       }
     }
     
+    val isEC = modelType match {
+      case `hecMEM` | ADMM => true
+      case _ => false
+    }
+    val isVB = modelType match {
+      case MEM | `hMEM` | `hecMEM` => true
+      case _ => false
+    }
+    val hasPrior = modelType match {
+      case `hMEM` | `hecMEM` | ADMM => true
+      case _ => false
+    }
     
-    var jobName = "MF"
+    var jobName = "MF_"
     modelType match {
-      case `dGM` => jobName += "_dgm_b_" + numSlices
+      case ModelType.`dGM` => jobName += "dGM"
+      case ModelType.MEM => jobName += "MEM"
+      case ModelType.`hMEM` => jobName += "hMEM"
+      case ModelType.`hecMEM` => jobName += "hecMEM"
+      case ModelType.AVGM => jobName += "AVGM"
+      case ModelType.ADMM => jobName += "ADMM"
+    }
+    jobName +=  "_Out_" + numOuterIter + "_In_" + numInnerIter + "_K_" + numFactors
+    modelType match {
+      case `dGM` => jobName += numSlices + "_"
       case _ => {
-        jobName += "_dac"
-        if (ec) jobName += "_ec"
-        jobName += "_rb_" + numRowBlocks + "_cb_" + numColBlocks + 
-          "_gr_" + gammaRInit + "_gc_" + gammaCInit
+        jobName += "_NRB_" + numRowBlocks + "_NCB_" + numColBlocks + 
+          "_GR_" + gammaRInit + "_GC_" + gammaCInit
       }
     }
-    jobName +=  "_oi_" + numOuterIter + "_ii_" + numInnerIter + "_K_" + numFactors 
-    if (isVB) jobName += "_vb" else jobName += "_map"
-    if (multicore) jobName += "_mc"
+    if (multicore) jobName += "_MC"
     optType match {
-      case CD => jobName += "_cd"
-      case CDPP => jobName += "_cdpp"
-      case ALS => jobName += "_als"
+      case CD => jobName += "_CD"
+      case CDPP => jobName += "_CD++"
+      case ALS => jobName += "_ALS"
     }
-    regType match {
-      case Trace => jobName += "_trace"
-      case Max => jobName += "_max"
+    if (modelType != MEM && modelType != AVGM) {
+        regType match {
+        case L1 => jobName += "_L1"
+        case L2 => jobName += "_L2"
+        case Max => jobName += "_MAX"
+      }
+      jobName += "_REG_" + regPara
     }
-    jobName += "_reg_" + regPara
-    if (multicore) jobName += "_multicore"
-    
-    val logPath = outputDir + jobName + ".txt"
-    
+    val logPath = outputDir + jobName + "_LOG" + ".txt"
+    val rmses = new Array[Double](numOuterIter)
+    val times = new Array[Double](numOuterIter)
+    val resultPath = outputDir + jobName + "_RESULT" + ".txt"
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
     
     val bwLog = new BufferedWriter(new FileWriter(new File(logPath)))
+    val bwResult = new BufferedWriter(new FileWriter(new File(resultPath)))
     val conf = new SparkConf()
 //      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 //      .set("spark.kryo.registrator",  classOf[utilities.Registrator].getName)
@@ -280,13 +299,13 @@ object PMF {
       mean, scale, seq, numSlices, numFactors, regPara, isVB)
       case _ => DivideAndConquer(sc, trainingDir, testingDir, numRows, numCols,
         numRowBlocks, numColBlocks, numCores, seq, mean, scale, numFactors, 
-        gammaRInit, gammaCInit, ecR, ecC, isVB, emBayes, bwLog)
+        gammaRInit, gammaCInit, isEC, hasPrior, isVB, emBayes, multicore, bwLog)
     }
     
-    bwLog.write("Preprocesing data finished in " 
-        + (System.currentTimeMillis()-currentTime)*0.001 + "(s)\n")
-    println("Preprocesing data finished in " 
-        + (System.currentTimeMillis()-currentTime)*0.001 + "(s)")
+    bwLog.write("Preprocessing data finished in " 
+        + (System.currentTimeMillis()-startTime)*0.001 + "(s)\n")
+    println("Preprocessing data finished in " 
+        + (System.currentTimeMillis()-startTime)*0.001 + "(s)")
     
     for (iter <- 0 until numOuterIter) {
       val iterTime = System.currentTimeMillis()
@@ -303,6 +322,8 @@ object PMF {
       val gammaR = model.getGammaR
       val gammaC = model.getGammaC
       val time = (System.currentTimeMillis() - iterTime)*0.001
+      rmses(iter) = testingRMSELocal
+      times(iter) = time
       println("Iter: " + iter + " finsied, time elapsed: " + time)
       println("Testing RMSE: global " + testingRMSEGlobal + 
         " local " + testingRMSELocal)
@@ -321,10 +342,13 @@ object PMF {
       }
     }
     bwLog.write("Total time elapsed " 
-        + (System.currentTimeMillis()-currentTime)*0.001 + "(s)")
+        + (System.currentTimeMillis()-startTime)*0.001 + "(s)")
     bwLog.close()
+    bwResult.write(rmses.mkString("[", ", ", "];") + '\n')
+    bwResult.write(times.mkString("[", ", ", "];") + '\n')
+    bwResult.close()
     println("Total time elapsed " 
-        + (System.currentTimeMillis()-currentTime)*0.001 + "(s)")
+        + (System.currentTimeMillis()-startTime)*0.001 + "(s)")
     System.exit(0)
   }
 }
