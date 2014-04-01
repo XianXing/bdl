@@ -26,7 +26,7 @@ object PMF {
     if (seq) "output/test_Syn_M_5000_N_5000_K_10_spa_0.1_tr_0.9_lam_100.0" 
     else "input/ml-1m/mf_test"
   val outputDir = "output/"
-  val modelType = AVGM
+  val modelType = hecMEM
   val optType = CDPP
   val regType = L2
   val regPara = 1f
@@ -36,9 +36,9 @@ object PMF {
   val gammaRInit = 10f
   val gammaCInit = 10f
   val numOuterIter = 10
-  val numInnerIter = 10
+  val maxInnerIter = 5
   val numFactors = 20
-  
+  val stopCrt = 10f
   //for each movie, numRows = 1621, numCols = 55423, mean: 4.037181f
   val numRows = if (seq) 5000 else 6041
   val numCols = if (seq) 5000 else 3953
@@ -67,7 +67,7 @@ object PMF {
     options.addOption(NUM_COL_BLOCKS_OPTION, true, "number of column blocks")
     options.addOption(NUM_ROW_BLOCKS_OPTION, true, "number of row blocks")
     options.addOption(REG_PARA_OPTION, true, "set the regularization parameter")
-    options.addOption(OPTIMIZER_OPTION, true, "optimizer type (e.g. ALS, CD)")
+    options.addOption(OPTIMIZER_OPTION, true, "optimizer type (e.g. ALS, CD, VBCD)")
     options.addOption(REGULARIZER_OPTION, true, "regu type (e.g. L1, L2, Max)")
     options.addOption(MODEL_OPTION, true, "model type  (e.g. admm, hecmem, dgm)")
     options.addOption(GAMMA_R_INIT_OPTION, true, "initial guess for gammaR")
@@ -85,6 +85,8 @@ object PMF {
         "multicore computing on each machine")
     options.addOption(INTERVAL_OPTION, true, "interval to calculate testing RMSE")
     options.addOption(SEQUENCE_FILE_OPTION, false, "input is sequence file")
+    options.addOption(STOPPING_CRITERIA_OPTION, true, 
+        "stopping criteria for inner iterations")
     
     val parser = new GnuParser()
     val formatter = new HelpFormatter()
@@ -119,7 +121,8 @@ object PMF {
         case "mem" => MEM
         case "hmem" => hMEM
         case "hecmem" => hecMEM
-        case "dgm" => dGM
+        case "dvb" => dVB
+        case "dmap" => dMAP
         case _ => {
           assert(false, "unexpected model type: " + name)
           null
@@ -183,7 +186,7 @@ object PMF {
       if (line.hasOption(OUTER_ITERATION_OPTION))
         line.getOptionValue(OUTER_ITERATION_OPTION).toInt
       else 10
-    val numInnerIter = 
+    val maxInnerIter = 
       if (line.hasOption(INNER_ITERATION_OPTION))
         line.getOptionValue(INNER_ITERATION_OPTION).toInt
       else 5
@@ -212,8 +215,13 @@ object PMF {
         line.getOptionValue(NUM_SLICES_OPTION).toInt
       else numRowBlocks*numColBlocks
     val multicore = line.hasOption(MULTICORE_OPTION) || 
-        (line.hasOption(NUM_CORES_OPTION) && numCores > 2*numSlices)
+        (line.hasOption(NUM_CORES_OPTION) && numCores >= 2*numSlices)
     val seq = line.hasOption(SEQUENCE_FILE_OPTION)
+    val stopCrt = 
+      if (line.hasOption(STOPPING_CRITERIA_OPTION)) {
+        line.getOptionValue(STOPPING_CRITERIA_OPTION).toFloat
+      }
+      else 0f
     if (line.hasOption(TMP_DIR_OPTION)) {
       System.setProperty("spark.local.dir", line.getOptionValue(TMP_DIR_OPTION))
     }
@@ -235,6 +243,10 @@ object PMF {
       case _ => false
     }
     val isVB = modelType match {
+      case MEM | `hMEM` | `hecMEM` | `dVB` => true
+      case _ => false
+    }
+    val emBayes = modelType match {
       case MEM | `hMEM` | `hecMEM` => true
       case _ => false
     }
@@ -245,16 +257,17 @@ object PMF {
     
     var jobName = "MF_"
     modelType match {
-      case ModelType.`dGM` => jobName += "dGM"
+      case ModelType.`dMAP` => jobName += "dMAP"
+      case ModelType.`dVB` => jobName += "dVB"
       case ModelType.MEM => jobName += "MEM"
       case ModelType.`hMEM` => jobName += "hMEM"
       case ModelType.`hecMEM` => jobName += "hecMEM"
       case ModelType.AVGM => jobName += "AVGM"
       case ModelType.ADMM => jobName += "ADMM"
     }
-    jobName +=  "_Out_" + numOuterIter + "_In_" + numInnerIter + "_K_" + numFactors
+    jobName +=  "_Out_" + numOuterIter + "_In_" + maxInnerIter + "_K_" + numFactors
     modelType match {
-      case `dGM` => jobName += numSlices + "_"
+      case `dMAP` | `dVB` => jobName += "_NB_" + numSlices
       case _ => {
         jobName += "_NRB_" + numRowBlocks + "_NCB_" + numColBlocks + 
           "_GR_" + gammaRInit + "_GC_" + gammaCInit
@@ -267,13 +280,14 @@ object PMF {
       case ALS => jobName += "_ALS"
     }
     if (modelType != MEM && modelType != AVGM) {
-        regType match {
+      regType match {
         case L1 => jobName += "_L1"
         case L2 => jobName += "_L2"
         case Max => jobName += "_MAX"
       }
       jobName += "_REG_" + regPara
     }
+    jobName += "_crt_" + stopCrt
     val logPath = outputDir + jobName + "_LOG" + ".txt"
     val rmses = new Array[Double](numOuterIter)
     val times = new Array[Double](numOuterIter)
@@ -293,10 +307,9 @@ object PMF {
 //      .setSparkHome(System.getenv("SPARK_HOME"))
     val sc = new SparkContext(mode, jobName, conf)
     
-    val emBayes = isVB
     var model = modelType match {
-      case `dGM` => DistributedGradient(sc, trainingDir, testingDir,
-      mean, scale, seq, numSlices, numFactors, regPara, isVB)
+      case `dVB` | `dMAP` => DistributedGradient(sc, trainingDir, testingDir,
+        mean, scale, seq, numSlices, numFactors, regPara, isVB)
       case _ => DivideAndConquer(sc, trainingDir, testingDir, numRows, numCols,
         numRowBlocks, numColBlocks, numCores, seq, mean, scale, numFactors, 
         gammaRInit, gammaCInit, isEC, hasPrior, isVB, emBayes, multicore, bwLog)
@@ -309,18 +322,18 @@ object PMF {
     
     for (iter <- 0 until numOuterIter) {
       val iterTime = System.currentTimeMillis()
-      if (iter == 0) model = model.init(numInnerIter, optType, regPara, regType) 
-      else model = model.train(numInnerIter, optType, regPara, regType)
+//      val numInnerIter = math.min(maxInnerIter, iter + 3)
+      if (modelType != `dVB` && modelType != `dMAP`) model.setStopCrt(stopCrt)
+      if (iter == 0) model = model.init(maxInnerIter, optType, regPara, regType) 
+      else model = model.train(maxInnerIter, optType, regPara, regType)
       val testingRMSEGlobal = model.getValidatingRMSE(true)*scale
       val testingRMSELocal =
         modelType match {
-          case `dGM` => testingRMSEGlobal
+          case `dMAP` | `dVB` => testingRMSEGlobal
           case _ => model.getValidatingRMSE(false)*scale
         }
       val factorsRL2Norm = model.getFactorsRL2Norm
       val factorsCL2Norm = model.getFactorsCL2Norm
-      val gammaR = model.getGammaR
-      val gammaC = model.getGammaC
       val time = (System.currentTimeMillis() - iterTime)*0.001
       rmses(iter) = testingRMSELocal
       times(iter) = time
@@ -334,11 +347,18 @@ object PMF {
         " local " + testingRMSELocal + "\n")
       bwLog.write("FactorsR L2 norm: " + factorsRL2Norm + 
         " , FactorsC L2 norm: " + factorsCL2Norm + "\n")
-      if (isVB && modelType != `dGM`) {
-        println("GammaR: " + gammaR.mkString("(", ", ", ")"))
-        println("GammaC: " + gammaC.mkString("(", ", ", ")"))
-        bwLog.write("GammaR: " + gammaR.mkString("(", ", ", ")") + '\n')
-        bwLog.write("GammaC: " + gammaC.mkString("(", ", ", ")") + '\n')
+      if (modelType != `dMAP` && modelType != `dVB`) {
+        val numIters = model.getNumIters
+        println("num inner iters: " + numIters.mkString("(", ", ", ")"))
+        bwLog.write("num inner iters: " + numIters.mkString("(", ", ", ")") + '\n')
+        if (isVB) {
+          val gammaR = model.getGammaR
+          val gammaC = model.getGammaC
+          println("GammaR: " + gammaR.mkString("(", ", ", ")"))
+          println("GammaC: " + gammaC.mkString("(", ", ", ")"))
+          bwLog.write("GammaR: " + gammaR.mkString("(", ", ", ")") + '\n')
+          bwLog.write("GammaC: " + gammaC.mkString("(", ", ", ")") + '\n')
+        }
       }
     }
     bwLog.write("Total time elapsed " 

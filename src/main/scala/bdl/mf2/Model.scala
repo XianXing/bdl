@@ -37,6 +37,8 @@ class Model (val factorsR: RDD[(Int, Array[Float])],
   def getGammaR: Array[Float] = null
   def getGammaC: Array[Float] = null
   
+  def setStopCrt(stopCrt: Float): Unit = {}
+  def getNumIters: Array[Int] = null
 }
 
 private object Model {

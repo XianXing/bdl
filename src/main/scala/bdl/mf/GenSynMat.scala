@@ -43,7 +43,7 @@ object GenSynMat {
   
   def main(args : Array[String]) {
     
-    val currentTime = System.currentTimeMillis();
+    val currentTime = System.currentTimeMillis()
     
     val options = new Options()
     options.addOption(HELP, false, "print the help message")
@@ -109,7 +109,6 @@ object GenSynMat {
       if (line.hasOption(NUM_OUTPUT_BLOCKS_OPTION))
         line.getOptionValue(NUM_OUTPUT_BLOCKS_OPTION).toInt
       else numRowBlocks*numColBlocks
-        
     val lambda = 
       if (line.hasOption(LAMBDA_INIT_OPTION))
         line.getOptionValue(LAMBDA_INIT_OPTION).toFloat

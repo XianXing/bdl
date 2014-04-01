@@ -129,4 +129,5 @@ object Settings {
   val OPTIMIZER_OPTION = "opt"
   val REGULARIZER_OPTION = "reg"
   val VARIATIONAL_OPTION = "var"
+  val STOPPING_CRITERIA_OPTION = "stop_crt"
 }

@@ -12,7 +12,8 @@ import CoordinateDescent._
 class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[Float]],
     val precsR: Array[Array[Float]], val precsC: Array[Array[Float]],
     val lagsR: Array[Array[Float]], val lagsC: Array[Array[Float]],
-    val gammaR: Array[Float], val gammaC: Array[Float]) extends Serializable {
+    val gammaR: Array[Float], val gammaC: Array[Float], var numIter: Int) 
+    extends Serializable {
     
   def getSE(data: SparseMatrix): Double = data.getSE(factorsR, factorsC, true)
   
@@ -40,15 +41,16 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
     this
   }
   
-  def train(data: SparseMatrix, optType: OptimizerType, numIter: Int, emBayes: Boolean,
-      multicore: Boolean, priorsR: Array[Array[Float]], priorsC: Array[Array[Float]])
+  def train(data: SparseMatrix, optType: OptimizerType, maxIter: Int, stopCrt: Float,
+      emBayes: Boolean, multicore: Boolean, 
+      priorsR: Array[Array[Float]], priorsC: Array[Array[Float]])
     : LocalModel = {
-    optType match {
-      case CD => runCD(data, numIter, multicore, 
-        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC)
-      case CDPP => runCDPP(data, numIter, 1, multicore, 
-        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC)
-      case _ => System.err.println("only supports CD and CDPP")
+    numIter = optType match {
+      case CD => runCD(data, maxIter, stopCrt, multicore, 
+        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC, !emBayes)
+      case CDPP => runCDPP(data, maxIter, 1, stopCrt, multicore, 
+        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC, !emBayes)
+      case _ => {System.err.println("only supports CD and CDPP"); 0}
     }
     if (emBayes) {
       updateGamma(factorsR, precsR, priorsR, gammaR)
@@ -56,14 +58,12 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
     }
     this
   }
-  
 }
 
 object LocalModel {
   
-  def apply (numRows: Int, numCols: Int, numFactors: Int, 
-      rowMap: Array[Int], colMap: Array[Int],
-      gamma_r_init: Float, gamma_c_init: Float, 
+  def apply (numFactors: Int, rowMap: Array[Int], colMap: Array[Int],
+      gamma_r_init: Float, gamma_c_init: Float,
       ecR: Boolean, ecC: Boolean, isVB: Boolean) : LocalModel = {
     
     def hash(x: Int): Int = {
@@ -71,6 +71,8 @@ object LocalModel {
       r ^ (r >>> 7) ^ (r >>> 4)
     }
     
+    val numRows = rowMap.length
+    val numCols = colMap.length
     val factorsR = Array.ofDim[Float](numFactors, numRows)
     var r = 0
     val rand = new Random()
@@ -98,7 +100,7 @@ object LocalModel {
       else null
     val gammaR = Array.fill(numFactors)(gamma_r_init)
     val gammaC = Array.fill(numFactors)(gamma_c_init)
-    new LocalModel(factorsR, factorsC, precsR, precsC, lagsR, lagsC, gammaR, gammaC)
+    new LocalModel(factorsR, factorsC, precsR, precsC, lagsR, lagsC, gammaR, gammaC, 0)
   }
   
   def toGlobal(factors: Array[Array[Float]], map: Array[Int]) 

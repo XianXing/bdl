@@ -133,12 +133,12 @@ object DistributedGradient{
     colBlockedParas.count
     val rowFactors = unblockFactors(rowBlockedParas, rowOutLinks)
     val colFactors = unblockFactors(colBlockedParas, colOutLinks)
-    val numRows = rowInLinks.map{case(id, inlink) => 
-      inlink.elementIds(inlink.elementIds.length-1)
+    val numRows = rowInLinks.map{
+      case(id, inlink) => inlink.elementIds.last
     }.reduce(math.max(_, _))
     println("num rows:" + numRows)
-    val numCols = colInLinks.map{case(id, inlink) => 
-      inlink.elementIds(inlink.elementIds.length-1)
+    val numCols = colInLinks.map{
+      case(id, inlink) => inlink.elementIds.last
     }.reduce(math.max(_, _))
     println("num cols:" + numCols)
     val numRowBlocks = math.sqrt(numBlocks).toInt
@@ -265,18 +265,18 @@ object DistributedGradient{
     optimizerType match {
       case ALS => colBlockedMessages.join(rowInLinks).mapValues{ 
         case (colMessages, rowInLink) => 
-          ALS(colMessages, rowInLink, numFactors, regPara)
+          ALS(colMessages, rowInLink, numFactors, regPara, true)
       }
       case CD => colBlockedMessages.join(rowInLinks.join(rowBlockedParas)).mapValues{
         case (colMessages, (rowInLink, rowBlockedPara)) => 
-          CD(colMessages, rowBlockedPara, rowInLink, numFactors, regPara, isVB)
+          CD(colMessages, rowBlockedPara, rowInLink, numFactors, regPara, isVB, true)
       }
       case _ => {System.err.print("Only supports ALS and CD"); System.exit(-1); null}
     }
   }
   
   def ALS(colMessages: Seq[(Int, (Array[Array[Float]], Array[Array[Float]]))], 
-      rowInLink: InLinkBlock, numFactors: Int, regPara: Float)
+      rowInLink: InLinkBlock, numFactors: Int, regPara: Float, weightedReg: Boolean)
     : (Array[Array[Float]], Array[Array[Float]]) = {
     // Sort the incoming block para messages by block ID and make them an array
     val colBlockParas = colMessages.sortBy(_._1).map(_._2).toArray
@@ -293,6 +293,9 @@ object DistributedGradient{
     val tempXtX = FloatMatrix.zeros(triangleSize)
     val fullXtX = FloatMatrix.zeros(numFactors, numFactors)
     
+    // Number of obs per row
+    val numObsPerRow = new Array[Int](numRows)
+    
     // Compute the XtX and Xy values for each user by adding products 
     // it rated in each product block
     for (bid <- 0 until numBlocks) {
@@ -302,6 +305,7 @@ object DistributedGradient{
         fillXtX(colFactor, tempXtX)
         val (rowIDs, rowValues) = rowInLink.ratingsForBlock(bid)(p)
         for (i <- 0 until rowIDs.length) {
+          numObsPerRow(rowIDs(i)) += 1
           rowXtX(rowIDs(i)).addi(tempXtX)
           SimpleBlas.axpy(rowValues(i), colFactor, rowXy(rowIDs(i)))
         }
@@ -312,7 +316,10 @@ object DistributedGradient{
       // Compute the full XtX matrix from the lower-triangular part we got above
       fillFullMatrix(triangularXtX, fullXtX)
       // Add regularization
-      (0 until numFactors).foreach(i => fullXtX.data(i*numFactors + i) += regPara)
+      (0 until numFactors).foreach(i => {
+        if (weightedReg) fullXtX.data(i*numFactors + i) += regPara*numObsPerRow(index)
+        else fullXtX.data(i*numFactors + i) += regPara
+      })
       // Solve the resulting matrix, which is symmetric and positive-definite
       Solve.solvePositive(fullXtX, rowXy(index)).data
     }
@@ -321,7 +328,8 @@ object DistributedGradient{
   
   def CD(colMessages: Seq[(Int, (Array[Array[Float]], Array[Array[Float]]))], 
       rowBlockParas: (Array[Array[Float]], Array[Array[Float]]),
-      rowInLink: InLinkBlock, numFactors: Int, regPara: Float, isVB: Boolean)
+      rowInLink: InLinkBlock, numFactors: Int, regPara: Float, 
+      isVB: Boolean, weightedReg: Boolean)
     : (Array[Array[Float]], Array[Array[Float]]) = {
     // Sort the incoming block factor messages by block ID and make them an array
     val colBlockParas = colMessages.sortBy(_._1).map(_._2).toArray
@@ -331,11 +339,13 @@ object DistributedGradient{
       new Array[Float](p._2.length)))
     val ratings = rowInLink.ratingsForBlock.map(_.map(_._2))
     val (rowFactors, rowPrecisions) = rowBlockParas
+    val numObsPerRow = new Array[Int](numRows)
     // calculate the residuals
     for (bid <- 0 until numBlocks) {
       val colFactors = colBlockParas(bid)._1
+      val numCols = colFactors.length
       var p = 0
-      while (p < colFactors.length) {
+      while (p < numCols) {
         val colFactor = colFactors(p)
         val (rowIDs, rowValues) = rowInLink.ratingsForBlock(bid)(p) 
         val res = residuals(bid)(p)
@@ -348,6 +358,7 @@ object DistributedGradient{
             res(i) -= rowFactor(k)*colFactor(k)
             k +=1 
           }
+          numObsPerRow(rowIDs(i)) += 1
           i += 1
         }
         p += 1
@@ -355,7 +366,9 @@ object DistributedGradient{
     }
     //coordinate descent
     val numerator = Array.fill(numRows)(0.0f)
-    val denominator = Array.fill(numRows)(regPara)
+    val denominator = 
+      if (weightedReg) numObsPerRow.map(_*regPara) 
+      else Array.fill(numRows)(regPara)
     for (k <- 0 until numFactors) {
       for (bid <- 0 until numBlocks) {
         val colFactors = colBlockParas(bid)._1
@@ -384,7 +397,7 @@ object DistributedGradient{
         rowFactors(n)(k) = numerator(n)/denominator(n)
         if (isVB) rowPrecisions(n)(k) = denominator(n)
         numerator(n) = 0
-        denominator(n) = regPara
+        denominator(n) = if (weightedReg) numObsPerRow(n)*regPara else regPara
         n += 1
       }
     }
@@ -443,7 +456,7 @@ object DistributedGradient{
       val rand = new Random(hash(seed ^ index))
       itr.map { case (x, y) =>
         (x, (
-          y.elementIds.map(_ =>(Array.fill(numFactors)(0.1f*(rand.nextFloat-0.5f)))),
+          y.elementIds.map(_ =>(Array.fill(numFactors)(0.1f*(rand.nextFloat)))),
           y.elementIds.map(_ => (Array.fill(numFactors)(regPara)))
           )
         )
@@ -457,7 +470,7 @@ object DistributedGradient{
       val rand = new Random(hash(seed ^ index))
       itr.map { case (x, y) =>
         (x, (
-          y.elementIds.map(_ =>(Array.fill(numFactors)(0.1f*(rand.nextFloat-0.5f)))),
+          y.elementIds.map(_ =>(Array.fill(numFactors)(0.1f*(rand.nextFloat)))),
           null
           )
         )

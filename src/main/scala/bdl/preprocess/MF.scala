@@ -18,13 +18,13 @@ import utilities._
 //preprocess for the matrix factorization problems
 object MF {
 
-  def parseLine(line: String, sep: String) : Record = {
+  def parseLine(line: String, sep: String): Record = {
     val tokens = line.split(sep)
     assert(tokens.length == 3, "unexpected record: " + line)
     new Record(tokens(0).toInt, tokens(1).toInt, tokens(2).toFloat)
   }
   
-  def parseLine(line: String, sep: String, mean: Float, scale: Float) : Record = {
+  def parseLine(line: String, sep: String, mean: Float, scale: Float): Record = {
     val tokens = line.split(sep)
     assert(tokens.length == 3, "unexpected record: " + line)
     new Record(tokens(0).toInt, tokens(1).toInt, (tokens(2).toFloat-mean)/scale)
@@ -42,7 +42,7 @@ object MF {
       }
   }
   
-  def parseLine(line: String, mean: Float, scale: Float) : Array[Record] = {
+  def parseLine(line: String, mean: Float, scale: Float): Array[Record] = {
     var list = Nil
     var pair = line.split('\t')
     val rowInx = pair(0).toInt
@@ -54,11 +54,11 @@ object MF {
       }
   }
   
-  def getPartitionID(record: Record, numRowBlocks: Int, numColBlocks: Int) 
-    : Int = (record.rowIdx%numRowBlocks)*numColBlocks + record.colIdx%numColBlocks
-    
-  def getPartitionMap(length: Int, numBlocks: Int, seed: Long) 
-    : Array[Byte] = {
+  def getPartitionID(record: Record, numRowBlocks: Int, numColBlocks: Int): Int = {
+    (record.rowIdx%numRowBlocks)*numColBlocks + record.colIdx%numColBlocks
+  }
+  
+  def getPartitionMap(length: Int, numBlocks: Int, seed: Long): Array[Byte] = {
     val partitionMap = Array.ofDim[Byte](length)
     val random = new Random(seed)
     val stats = Array.ofDim[Int](numBlocks)
@@ -69,7 +69,8 @@ object MF {
       partitionMap(r) = id
       r += 1
     }
-    var i = 0; while (i<stats.length) { 
+    var i = 0 
+    while (i < numBlocks) { 
       println("block " + i + " has " + stats(i) + " elements")
       i += 1
     }
@@ -79,7 +80,7 @@ object MF {
   def getPartitionedData(records: RDD[Record], numColBlocks: Int,
       rowPartitionMap: Broadcast[Array[Byte]], 
       colPartitionMap: Broadcast[Array[Byte]],
-      partitioner: Partitioner) : RDD[(Int, SparseMatrix)] = {
+      partitioner: Partitioner): RDD[(Int, SparseMatrix)] = {
      
     //on the choice between ArrayBuffer and ListBuffer:
     //altough ArrayBuffer consumes more memory in this case, it has lower cache-miss
@@ -139,7 +140,7 @@ object MF {
   }
   
   def preprocessNetflix(
-      inputDir: String, probePath: String, trainPath: String, testPath: String)= {
+      inputDir: String, probePath: String, trainPath: String, testPath: String) = {
     
     def readProbe(probePath: String) = {
       val dict = new HashMap[String, HashSet[String]]

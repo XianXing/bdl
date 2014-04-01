@@ -17,5 +17,5 @@ object RegularizerType extends Enumeration with Serializable {
 
 object ModelType extends Enumeration with Serializable {
   type ModelType = Value
-  val MEM, sMEM, hMEM, hecMEM, AVGM, sAVGM, ADMM, dGM = Value
+  val MEM, sMEM, hMEM, hecMEM, AVGM, sAVGM, ADMM, dVB, dMAP = Value
 }

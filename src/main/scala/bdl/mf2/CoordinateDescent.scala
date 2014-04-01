@@ -5,41 +5,11 @@ import utilities.SparseMatrix
 object CoordinateDescent {
   
   def runCD(data: SparseMatrix,
-      numIter: Int, multicore: Boolean,
-      factorsR: Array[Array[Float]],
-      precsR: Array[Array[Float]], gammaR: Array[Float], 
-      priorsC: Array[Array[Float]], factorsC: Array[Array[Float]],
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
-    runCD(data, numIter, multicore, priorsR = null, factorsR, precsR, gammaR,
-      priorsC, factorsC, precsC, gammaC)
-  }
-  
-  def runCD(data: SparseMatrix,
-      numIter: Int, multicore: Boolean,
-      priorsR: Array[Array[Float]], factorsR: Array[Array[Float]], 
-      precsR: Array[Array[Float]], gammaR: Array[Float], 
-      factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
-    runCD(data, numIter, multicore, priorsR, factorsR, precsR, gammaR,
-      priorsC = null, factorsC, precsC, gammaC)
-  }
-  
-  def runCD(data: SparseMatrix,
-      numIter: Int, multicore: Boolean,
-      factorsR: Array[Array[Float]], 
-      precsR: Array[Array[Float]], gammaR: Array[Float], 
-      factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
-    runCD(data, numIter, multicore, priorsR = null, factorsR, precsR, gammaR,
-      priorsC = null, factorsC, precsC, gammaC)
-  }
-  
-  def runCD(data: SparseMatrix,
-      numIter: Int, multicore: Boolean,
+      maxIter: Int, stopCrt: Float, multicore: Boolean,
       priorsR: Array[Array[Float]], factorsR: Array[Array[Float]], 
       precsR: Array[Array[Float]], gammaR: Array[Float],
       priorsC: Array[Array[Float]], factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
+      precsC: Array[Array[Float]], gammaC: Array[Float], weightedReg: Boolean): Int = {
     
     val isVB = precsR != null && precsC != null
     val hasPriorsR = priorsR != null
@@ -61,7 +31,10 @@ object CoordinateDescent {
     val rows = if (multicore) Array.tabulate(numRows)(i => i) else null
     val cols = if (multicore) Array.tabulate(numCols)(i => i) else null
     var iter = 0
-    while (iter < numIter) {
+    var newOBJ = 0f
+    var oldOBJ = Float.MaxValue
+    while (iter < maxIter && math.abs(oldOBJ - newOBJ) > stopCrt) {
+      oldOBJ = newOBJ
       if (multicore) {
         CoordinateDescent.getResidual(col_ptr, row_idx, value_c, 
           factorsC, factorsR, true, res_c)
@@ -70,13 +43,16 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
+            val gamma = 
+              if (weightedReg) (col_ptr(c+1)-col_ptr(c))*gammaC(k) 
+              else gammaC(k)
             if (isVB) {
               update(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
-                prior, gammaC(k), factorsC(k), precsC(k))
+                prior, gamma, factorsC(k), precsC(k))
             }
             else {
               update(c, col_ptr, row_idx, res_c, factorsR(k),
-                prior, gammaC(k), factorsC(k))
+                prior, gamma, factorsC(k))
             }
             k += 1
           }
@@ -88,13 +64,16 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
+            val gamma = 
+              if (weightedReg) (row_ptr(r+1)-row_ptr(r))*gammaR(k) 
+              else gammaR(k)
             if (isVB) {
               update(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
-                prior, gammaR(k), factorsR(k), precsR(k))
+                prior, gamma, factorsR(k), precsR(k))
             }
             else {
               update(r, row_ptr, col_idx, res_r, factorsC(k),
-                prior, gammaR(k), factorsR(k))
+                prior, gamma, factorsR(k))
             }
             k += 1
           }
@@ -109,13 +88,16 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
+            val gamma = 
+              if (weightedReg) (col_ptr(c+1)-col_ptr(c))*gammaC(k) 
+              else gammaC(k)
             if (isVB) {
               update(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
-                prior, gammaC(k), factorsC(k), precsC(k))
+                prior, gamma, factorsC(k), precsC(k))
             }
             else {
               update(c, col_ptr, row_idx, res_c, factorsR(k),
-                prior, gammaC(k), factorsC(k))
+                prior, gamma, factorsC(k))
             }
             k += 1
           }
@@ -128,62 +110,37 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
+            val gamma = 
+              if (weightedReg) (row_ptr(r+1)-row_ptr(r))*gammaR(k) 
+              else gammaR(k)
             if (isVB) {
               update(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
-                prior, gammaR(k), factorsR(k), precsR(k))
+                prior, gamma, factorsR(k), precsR(k))
             }
             else {
               update(r, row_ptr, col_idx, res_r, factorsC(k),
-                prior, gammaR(k), factorsR(k))
+                prior, gamma, factorsR(k))
             }
             k += 1    
           }
           r += 1
         }
       }
+      val se = getSE(res_c, multicore)
+      val regR = getReg(row_ptr, factorsR, priorsR, gammaR, multicore)
+      val regC = getReg(col_ptr, factorsC, priorsC, gammaC, multicore)
+      newOBJ = se + regR + regC
       iter += 1
     }
+    iter
   }
   
   def runCDPP(data: SparseMatrix,
-      numOuterIter: Int, numInnerIter: Int, multicore: Boolean,
-      factorsR: Array[Array[Float]], 
-      precsR: Array[Array[Float]], gammaR: Array[Float],
-      priorsC: Array[Array[Float]], factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
-    
-    runCDPP(data, numOuterIter, numInnerIter, multicore, 
-      priorsR = null, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC)
-  }
-  
-  def runCDPP(data: SparseMatrix,
-      numOuterIter: Int, numInnerIter: Int, multicore: Boolean,
-      priorsR: Array[Array[Float]], factorsR: Array[Array[Float]], 
-      precsR: Array[Array[Float]], gammaR: Array[Float],
-      factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
-    
-    runCDPP(data, numOuterIter, numInnerIter, multicore, 
-      priorsR, factorsR, precsR, gammaR, priorsC = null, factorsC, precsC, gammaC)
-  }
-  
-  def runCDPP(data: SparseMatrix,
-      numOuterIter: Int, numInnerIter: Int, multicore: Boolean,
-      factorsR: Array[Array[Float]], 
-      precsR: Array[Array[Float]], gammaR: Array[Float],
-      factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
-    
-    runCDPP(data, numOuterIter, numInnerIter, multicore, priorsR = null, factorsR,
-      precsR, gammaR, priorsC = null, factorsC, precsC, gammaC)
-  }
-  
-  def runCDPP(data: SparseMatrix,
-      numOuterIter: Int, numInnerIter: Int, multicore: Boolean,
+      maxOuterIter: Int, numInnerIter: Int, stopCrt: Float, multicore: Boolean,
       priorsR: Array[Array[Float]], factorsR: Array[Array[Float]], 
       precsR: Array[Array[Float]], gammaR: Array[Float],
       priorsC: Array[Array[Float]], factorsC: Array[Array[Float]], 
-      precsC: Array[Array[Float]], gammaC: Array[Float]): Unit = {
+      precsC: Array[Array[Float]], gammaC: Array[Float], weightedReg: Boolean): Int = {
     
     val isVB = precsR != null && precsC != null
     val hasPriorsR = priorsR != null
@@ -202,7 +159,10 @@ object CoordinateDescent {
     val rows = Array.tabulate(numRows)(i => i)
     val cols = Array.tabulate(numCols)(i => i)
     var iter = 0
-    while (iter < numOuterIter) {
+    var oldOBJ = Float.MaxValue
+    var newOBJ = 0f
+    while (iter < maxOuterIter && math.abs(oldOBJ - newOBJ) > stopCrt) {
+      oldOBJ = newOBJ
       var k = 0
       while (k<numFactors) {
         updateResidual(row_ptr, col_idx, res_r, factorsR(k), factorsC(k), 
@@ -214,24 +174,30 @@ object CoordinateDescent {
           if (multicore) {
             cols.par.map(c => {
               val priorC = if (hasPriorsC && priorsC(c)!=null) priorsC(c)(k) else 0
+              val gamma = 
+                if (weightedReg) (col_ptr(c+1)-col_ptr(c))*gammaC(k) 
+                else gammaC(k)
               if (isVB) {
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
-                  priorC, gammaC(k), factorsC(k), precsC(k))
+                  priorC, gamma, factorsC(k), precsC(k))
               }
               else { 
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), 
-                  priorC, gammaC(k), factorsC(k))
+                  priorC, gamma, factorsC(k))
               }
             })
             rows.par.map(r => {
               val priorR = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
+              val gamma = 
+                if (weightedReg) (row_ptr(r+1)-row_ptr(r))*gammaR(k) 
+                else gammaR(k)
               if (isVB) {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
-                  priorR, gammaR(k), factorsR(k), precsR(k))
+                  priorR, gamma, factorsR(k), precsR(k))
               }
               else {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), 
-                  priorR, gammaR(k), factorsR(k))
+                  priorR, gamma, factorsR(k))
               }
             })
           }
@@ -239,26 +205,32 @@ object CoordinateDescent {
             var c = 0
             while (c < numCols) {
               val priorC = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
+              val gamma = 
+                if (weightedReg) (col_ptr(c+1)-col_ptr(c))*gammaC(k) 
+                else gammaC(k)
               if (isVB) {
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
-                  priorC, gammaC(k), factorsC(k), precsC(k))
+                  priorC, gamma, factorsC(k), precsC(k))
               }
               else { 
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), 
-                  priorC, gammaC(k), factorsC(k))
+                  priorC, gamma, factorsC(k))
               }
               c += 1
             }
             var r = 0
             while (r < numRows) {
               val priorR = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
+              val gamma = 
+                if (weightedReg) (row_ptr(r+1)-row_ptr(r))*gammaR(k) 
+                else gammaR(k)
               if (isVB) {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
-                  priorR, gammaR(k), factorsR(k), precsR(k))
+                  priorR, gamma, factorsR(k), precsR(k))
               }
               else {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), 
-                  priorR, gammaR(k), factorsR(k))
+                  priorR, gamma, factorsR(k))
               }
               r += 1
             }
@@ -271,9 +243,14 @@ object CoordinateDescent {
           false, multicore)
         k += 1
       }
+      val se = getSE(res_c, multicore)
+      val regR = getReg(row_ptr, factorsR, priorsR, gammaR, multicore)
+      val regC = getReg(col_ptr, factorsC, priorsC, gammaC, multicore)
+      newOBJ = se + regR + regC
       iter += 1
     }
-//    getRMSE(res_c, multicore)
+    println("obj: " + newOBJ)
+    iter
   }
   
   def update(r: Int, row_ptr: Array[Int], col_idx: Array[Int], res_r: Array[Float],
@@ -435,12 +412,52 @@ object CoordinateDescent {
     value_r
   } // end of getResidual
   
-  def getRMSE(res: Array[Float], multicore: Boolean = false) : Float = {
+  def getSE(res: Array[Float], multicore: Boolean = false) : Float = {
     val nnz = res.length
-    val se =
-      if (multicore) res.par.map(r => r*r).fold(0f)(_+_)
-      else res.view.map(r => r*r).sum
-    math.sqrt(se/nnz).toFloat
+    if (multicore) res.par.map(r => r*r).fold(0f)(_+_)
+    else res.view.map(r => r*r).sum
+  }
+  
+  def getReg(ptrs: Array[Int], factors: Array[Array[Float]], 
+      priors: Array[Array[Float]], gammas: Array[Float], 
+      weightedPara: Boolean = false, multicore: Boolean = false): Float = {
+    val numFactors = factors.length
+    val length = factors(0).length
+    if (multicore) {
+      (0 until numFactors).par.map(k => {
+        val factor = factors(k)
+        var l = 0
+        var sum = 0f
+        while (l < length) {
+          val diff = 
+            if (priors != null && priors(l) != null) factor(l) - priors(l)(k)
+            else factor(l)
+          if (weightedPara) sum += (ptrs(l+1)-ptrs(l))*diff*diff
+          else sum += diff*diff
+          l += 1
+        }
+        sum*gammas(k)
+      }).fold(0f)(_+_)
+    } else {
+      var k = 0
+      var sum = 0f
+      while (k < numFactors) {
+        val factor = factors(k)
+        var l = 0
+        var sumK = 0f
+        while (l < length) {
+          val diff = 
+            if (priors != null && priors(l) != null) factor(l) - priors(l)(k)
+            else factor(l)
+          if (weightedPara) sumK += (ptrs(l+1)-ptrs(l))*diff*diff
+          else sumK += diff*diff
+          l += 1
+        }
+        sum += sumK*gammas(k)
+        k += 1
+      }
+      sum
+    }
   }
   
   def updateGamma(means: Array[Array[Float]], precisions: Array[Array[Float]],
