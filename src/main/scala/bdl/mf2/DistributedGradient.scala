@@ -32,7 +32,7 @@ class DistributedGradient(
     val validatingData: RDD[(Int, SparseMatrix)], val nnzVal: Int,
     val rowValIDToSend: RDD[(Int, Array[Int])],
     val colValIDToSend: RDD[(Int, Array[Int])],
-    val numFactors: Int, val isVB: Boolean)
+    val numFactors: Int, val isVB: Boolean, val weightedReg: Boolean)
   extends Model(rowFactors, colFactors) {
   
   private def creat(rowFactors: RDD[(Int, Array[Float])],
@@ -41,8 +41,8 @@ class DistributedGradient(
     colBlockedParas: RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))])
     : DistributedGradient = {
     new DistributedGradient(rowFactors, colFactors, rowBlockedParas, colBlockedParas,
-        rowLinkBlocks, colLinkBlocks, partitioner, 
-        validatingData, nnzVal, rowValIDToSend, colValIDToSend, numFactors, isVB)
+        rowLinkBlocks, colLinkBlocks, partitioner, validatingData, nnzVal, 
+        rowValIDToSend, colValIDToSend, numFactors, isVB, weightedReg)
   }
   
   override def init(numIter: Int, optType: OptimizerType, 
@@ -61,13 +61,15 @@ class DistributedGradient(
     val colOutLinkBlocks = colLinkBlocks.mapValues(_._2)
     for (iter <- 1 to numIter) {
       val updatedColParas = DistributedGradient.update(oldRowParas, rowOutLinkBlocks, 
-        oldColParas, colInLinkBlocks, partitioner, isVB, numFactors, regPara, optType)
+        oldColParas, colInLinkBlocks, partitioner, isVB, weightedReg, 
+        numFactors, regPara, optType)
       updatedColParas.cache
       updatedColParas.count
       oldColParas.unpersist(true)
       oldColParas = updatedColParas
       val updatedRowParas = DistributedGradient.update(oldColParas, colOutLinkBlocks, 
-        oldRowParas, rowInLinkBlocks, partitioner, isVB, numFactors, regPara, optType)
+        oldRowParas, rowInLinkBlocks, partitioner, isVB, weightedReg, 
+        numFactors, regPara, optType)
       updatedRowParas.cache
       updatedRowParas.count
       oldRowParas.unpersist(true)
@@ -98,8 +100,9 @@ object DistributedGradient{
   private val storageLevel = MEMORY_AND_DISK
   
   def apply(sc: SparkContext, trainingDir: String, validatingDir: String,
-      mean: Float, scale: Float, syn: Boolean, numBlocks: Int, numFactors: Int, 
-      regPara: Float, isVB: Boolean): DistributedGradient = {
+      mean: Float, scale: Float, syn: Boolean, numBlocks: Int, 
+      numFactors: Int, regPara: Float, isVB: Boolean, weightedReg: Boolean)
+    : DistributedGradient = {
     
     val trainingRecords = 
       DistributedGradient.toRecords(sc, trainingDir, numBlocks, syn, mean, scale)
@@ -121,13 +124,14 @@ object DistributedGradient{
     val seedGen = new Random()
     val rowSeed = seedGen.nextInt()
     val colSeed = seedGen.nextInt()
+    val precInit = if (weightedReg) Float.PositiveInfinity else regPara
     val rowBlockedParas = 
-      if (isVB) initParas(rowOutLinks, numFactors, regPara, rowSeed)
+      if (isVB) initParas(rowOutLinks, numFactors, precInit, rowSeed)
       else initParas(rowOutLinks, numFactors, rowSeed)
     rowBlockedParas.cache
     rowBlockedParas.count
     val colBlockedParas = 
-      if (isVB) initParas(colOutLinks, numFactors, regPara, colSeed)
+      if (isVB) initParas(colOutLinks, numFactors, precInit, colSeed)
       else initParas(colOutLinks, numFactors, colSeed)
     colBlockedParas.cache
     colBlockedParas.count
@@ -150,7 +154,8 @@ object DistributedGradient{
       if(!syn) sc.broadcast(getPartitionMap(numCols+1, numColBlocks, colSeed))
       else null
     val validatingData = toSparseMatrixBlocks(sc, validatingDir, rowBlockMap, 
-        colBlockMap, numRowBlocks, numColBlocks, partitioner, syn, mean, scale).cache
+        colBlockMap, numRowBlocks, numColBlocks, partitioner, 
+        syn, mean, scale).cache
     val nnzVal = validatingData.map(_._2.col_idx.length).reduce(_+_)
     val rowValIDToSend = validatingData.flatMap{
       case (pid, data) => data.rowMap.map((_, List(pid)))
@@ -160,8 +165,8 @@ object DistributedGradient{
     }.reduceByKey(_:::_).mapValues(_.toArray).cache
     trainingRecords.unpersist(true)
     new DistributedGradient(rowFactors, colFactors, rowBlockedParas, colBlockedParas,
-        rowLinks, colLinks, partitioner,
-        validatingData, nnzVal, rowValIDToSend, colValIDToSend, numFactors, isVB)
+        rowLinks, colLinks, partitioner, validatingData, nnzVal, rowValIDToSend, 
+        colValIDToSend, numFactors, isVB, weightedReg)
   }
   
   private def makeInLinkBlock(numBlocks: Int, records: Array[Record]): InLinkBlock = {
@@ -241,6 +246,7 @@ object DistributedGradient{
       rowInLinks: RDD[(Int, InLinkBlock)],
       partitioner: Partitioner,
       isVB: Boolean,
+      weightedReg: Boolean,
       numFactors: Int,
       regPara: Float,
       optimizerType: OptimizerType)
@@ -265,11 +271,12 @@ object DistributedGradient{
     optimizerType match {
       case ALS => colBlockedMessages.join(rowInLinks).mapValues{ 
         case (colMessages, rowInLink) => 
-          ALS(colMessages, rowInLink, numFactors, regPara, true)
+          ALS(colMessages, rowInLink, numFactors, regPara, weightedReg)
       }
       case CD => colBlockedMessages.join(rowInLinks.join(rowBlockedParas)).mapValues{
         case (colMessages, (rowInLink, rowBlockedPara)) => 
-          CD(colMessages, rowBlockedPara, rowInLink, numFactors, regPara, isVB, true)
+          CD(colMessages, rowBlockedPara, rowInLink, numFactors, regPara, 
+            isVB, weightedReg)
       }
       case _ => {System.err.print("Only supports ALS and CD"); System.exit(-1); null}
     }
@@ -450,14 +457,14 @@ object DistributedGradient{
     }
   }
   
-  def initParas(outLinks: RDD[(Int, OutLinkBlock)], numFactors:Int, regPara: Float,
+  def initParas(outLinks: RDD[(Int, OutLinkBlock)], numFactors:Int, precInit: Float,
       seed: Int): RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))] = {
     outLinks.mapPartitionsWithIndex { (index, itr) =>
       val rand = new Random(hash(seed ^ index))
       itr.map { case (x, y) =>
         (x, (
           y.elementIds.map(_ =>(Array.fill(numFactors)(0.1f*(rand.nextFloat)))),
-          y.elementIds.map(_ => (Array.fill(numFactors)(regPara)))
+          y.elementIds.map(_ => (Array.fill(numFactors)(precInit)))
           )
         )
       }

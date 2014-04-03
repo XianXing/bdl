@@ -28,13 +28,15 @@ object PMF {
   val outputDir = "output/"
   val modelType = hecMEM
   val optType = CDPP
+  val weightedReg = false
+  val emBayes = false
   val regType = L2
   val regPara = 1f
   val numCores = 1
   val numRowBlocks = 2
   val numColBlocks = 2
-  val gammaRInit = 10f
-  val gammaCInit = 10f
+  val gammaRInit = if (weightedReg) 0.1f else 10f
+  val gammaCInit = if (weightedReg) 0.1f else 10f
   val numOuterIter = 10
   val maxInnerIter = 5
   val numFactors = 20
@@ -87,6 +89,9 @@ object PMF {
     options.addOption(SEQUENCE_FILE_OPTION, false, "input is sequence file")
     options.addOption(STOPPING_CRITERIA_OPTION, true, 
         "stopping criteria for inner iterations")
+    options.addOption(MORE_PARA_OPTION, false, "gamma be row/document specific")
+    options.addOption(WEIGHTED_REG_OPTION, false, "weighted regularizer option")
+    options.addOption(EMPIRICAL_BAYES_OPTION, false, "empirical Bayes estimator option")
     
     val parser = new GnuParser()
     val formatter = new HelpFormatter()
@@ -162,6 +167,8 @@ object PMF {
       if (line.hasOption(REG_PARA_OPTION) && modelType != MEM && modelType != AVGM)
         line.getOptionValue(REG_PARA_OPTION).toFloat
       else 0f
+    val weightedReg = line.hasOption(WEIGHTED_REG_OPTION)
+    val emBayes = line.hasOption(EMPIRICAL_BAYES_OPTION)
     val mean = 
       if (line.hasOption(MEAN_OPTION))
         line.getOptionValue(MEAN_OPTION).toFloat
@@ -246,10 +253,6 @@ object PMF {
       case MEM | `hMEM` | `hecMEM` | `dVB` => true
       case _ => false
     }
-    val emBayes = modelType match {
-      case MEM | `hMEM` | `hecMEM` => true
-      case _ => false
-    }
     val hasPrior = modelType match {
       case `hMEM` | `hecMEM` | ADMM => true
       case _ => false
@@ -265,11 +268,11 @@ object PMF {
       case ModelType.AVGM => jobName += "AVGM"
       case ModelType.ADMM => jobName += "ADMM"
     }
-    jobName +=  "_Out_" + numOuterIter + "_In_" + maxInnerIter + "_K_" + numFactors
+    jobName +=  "_O_" + numOuterIter + "_I_" + maxInnerIter + "_K_" + numFactors
     modelType match {
-      case `dMAP` | `dVB` => jobName += "_NB_" + numSlices
+      case `dMAP` | `dVB` => jobName += "_B_" + numSlices
       case _ => {
-        jobName += "_NRB_" + numRowBlocks + "_NCB_" + numColBlocks + 
+        jobName += "_RB_" + numRowBlocks + "_CB_" + numColBlocks + 
           "_GR_" + gammaRInit + "_GC_" + gammaCInit
       }
     }
@@ -287,9 +290,11 @@ object PMF {
       }
       jobName += "_REG_" + regPara
     }
-    jobName += "_crt_" + stopCrt
+    if (stopCrt > 0) jobName += "_CRT_" + stopCrt
+    if (weightedReg) jobName += "_WR"
     val logPath = outputDir + jobName + "_LOG" + ".txt"
-    val rmses = new Array[Double](numOuterIter)
+    val localRMSE = new Array[Double](numOuterIter)
+    val globalRMSE = new Array[Double](numOuterIter)
     val times = new Array[Double](numOuterIter)
     val resultPath = outputDir + jobName + "_RESULT" + ".txt"
 //    System.setProperty("spark.storage.memoryFraction", "0.5")
@@ -309,10 +314,10 @@ object PMF {
     
     var model = modelType match {
       case `dVB` | `dMAP` => DistributedGradient(sc, trainingDir, testingDir,
-        mean, scale, seq, numSlices, numFactors, regPara, isVB)
+        mean, scale, seq, numSlices, numFactors, regPara, isVB, weightedReg)
       case _ => DivideAndConquer(sc, trainingDir, testingDir, numRows, numCols,
         numRowBlocks, numColBlocks, numCores, seq, mean, scale, numFactors, 
-        gammaRInit, gammaCInit, isEC, hasPrior, isVB, emBayes, multicore, bwLog)
+        gammaRInit, gammaCInit, isEC, hasPrior, isVB, weightedReg, multicore, bwLog)
     }
     
     bwLog.write("Preprocessing data finished in " 
@@ -322,7 +327,7 @@ object PMF {
     
     for (iter <- 0 until numOuterIter) {
       val iterTime = System.currentTimeMillis()
-//      val numInnerIter = math.min(maxInnerIter, iter + 3)
+//      val numInnerIter = math.min(maxInnerIter, iter + 5)
       if (modelType != `dVB` && modelType != `dMAP`) model.setStopCrt(stopCrt)
       if (iter == 0) model = model.init(maxInnerIter, optType, regPara, regType) 
       else model = model.train(maxInnerIter, optType, regPara, regType)
@@ -335,7 +340,8 @@ object PMF {
       val factorsRL2Norm = model.getFactorsRL2Norm
       val factorsCL2Norm = model.getFactorsCL2Norm
       val time = (System.currentTimeMillis() - iterTime)*0.001
-      rmses(iter) = testingRMSELocal
+      localRMSE(iter) = testingRMSELocal
+      globalRMSE(iter) = testingRMSEGlobal
       times(iter) = time
       println("Iter: " + iter + " finsied, time elapsed: " + time)
       println("Testing RMSE: global " + testingRMSEGlobal + 
@@ -351,7 +357,7 @@ object PMF {
         val numIters = model.getNumIters
         println("num inner iters: " + numIters.mkString("(", ", ", ")"))
         bwLog.write("num inner iters: " + numIters.mkString("(", ", ", ")") + '\n')
-        if (isVB) {
+        if (isVB && (iter == 0 || !weightedReg)) {
           val gammaR = model.getGammaR
           val gammaC = model.getGammaC
           println("GammaR: " + gammaR.mkString("(", ", ", ")"))
@@ -364,7 +370,8 @@ object PMF {
     bwLog.write("Total time elapsed " 
         + (System.currentTimeMillis()-startTime)*0.001 + "(s)")
     bwLog.close()
-    bwResult.write(rmses.mkString("[", ", ", "];") + '\n')
+    bwResult.write(localRMSE.mkString("[", ", ", "];") + '\n')
+    bwResult.write(globalRMSE.mkString("[", ", ", "];") + '\n')
     bwResult.write(times.mkString("[", ", ", "];") + '\n')
     bwResult.close()
     println("Total time elapsed " 

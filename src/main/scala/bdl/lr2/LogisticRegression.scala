@@ -75,7 +75,7 @@ object LogisticRegression extends Logging{
         "threshold on the used features' frequences")
     options.addOption(BINARY_FEATURES_OPTION, false, "binary features option")
     options.addOption(TARGET_AUC_OPTION, true, "targeted AUC option")
-    options.addOption(SUMSAMPLE_RATE_OPTION, true, "subsampling rate")
+    options.addOption(SUBSAMPLE_RATE_OPTION, true, "subsampling rate")
     options.addOption(MODEL_OPTION, true, 
         "model type  (e.g. avgm, savgm, admm, mem, hmem, hecmem, dgm)")
     options.addOption(OPTIMIZER_OPTION, true, "optimizer type (e.g. CG, LBFGS, CD)")
@@ -116,9 +116,9 @@ object LogisticRegression extends Logging{
       }
     }
     val subsampleRate = 
-      if (line.hasOption(SUMSAMPLE_RATE_OPTION)) {
+      if (line.hasOption(SUBSAMPLE_RATE_OPTION)) {
         modelType match {
-          case `sAVGM` => line.getOptionValue(SUMSAMPLE_RATE_OPTION).toFloat
+          case `sAVGM` => line.getOptionValue(SUBSAMPLE_RATE_OPTION).toFloat
           case _ => 0
         }
       }

@@ -159,7 +159,7 @@ object GenSynMat {
     System.setProperty("spark.storage.blockManagerSlaveTimeoutMs", "8000000")
     System.setProperty("spark.storage.blockManagerHeartBeatMs", "8000000")
     
-    val StorageLevel = storage.StorageLevel.MEMORY_ONLY_SER
+    val storageLevel = storage.StorageLevel.MEMORY_AND_DISK
     val JOB_NAME = "Syn" + "_M_" + numRows + "_N_" + numCols + "_K_" + numFactors + 
       "_spa_" + sparsity + "_tr_" + train_ratio + "_lam_" + lambda
     val sc = new SparkContext(MODE, JOB_NAME, System.getenv("SPARK_HOME"), JARS)
@@ -186,7 +186,7 @@ object GenSynMat {
         Array.fill(numFactors)((gaussian.nextGaussian*sigma).toFloat)
       })
       (bid, rowFactors)
-    }).persist(StorageLevel)
+    }).persist(storageLevel)
     println("number of row blocks: " + rowBlocks.count)
     val colBlocks = sc.parallelize((0 until numColBlocks), numColBlocks).map(bid => {
       val colIndices = colBlockMapBC.value.zipWithIndex.filter(_._1==bid).map(_._2)
@@ -196,7 +196,7 @@ object GenSynMat {
         Array.fill(numFactors)((gaussian.nextGaussian*sigma).toFloat)
       })
       (bid, colFactors)
-    }).persist(StorageLevel)
+    }).persist(storageLevel)
     println("number of col blocks: " + colBlocks.count)
     
     def drawColIdx(random: Random, map: HashSet[Int], numCols: Int) : Int = {
@@ -288,15 +288,15 @@ object GenSynMat {
             "length: " + testingRecords.length + "\tcountTest " + countTrain)
         (trainingRecords, testingRecords)
       }
-    }.cache
-    val TRAINING_DIR = OUTPUT_DIR + "train_" + JOB_NAME + PATH_SEPERATOR
-    val TESTING_DIR = OUTPUT_DIR + "test_" + JOB_NAME + PATH_SEPERATOR
+    }.persist(storageLevel)
+    syntheticData.count
+//    val TRAINING_DIR = OUTPUT_DIR + "train_" + JOB_NAME + PATH_SEPERATOR
+//    val TESTING_DIR = OUTPUT_DIR + "test_" + JOB_NAME + PATH_SEPERATOR
+//    syntheticData.flatMap(_._1.map((NullWritable.get, _)))
+//      .saveAsSequenceFile(TRAINING_DIR)
+//    syntheticData.flatMap(_._2.map((NullWritable.get, _)))
+//      .saveAsSequenceFile(TESTING_DIR)
     
-    syntheticData.flatMap(_._1.map((NullWritable.get, _)))
-      .saveAsSequenceFile(TRAINING_DIR)
-    syntheticData.flatMap(_._2.map((NullWritable.get, _)))
-      .saveAsSequenceFile(TESTING_DIR)
-      
     val bwLog = new BufferedWriter(new FileWriter(new File(JOB_NAME)))
     bwLog.write(JOB_NAME+"\n")
     println("number of training samples: " + numTrain.value)

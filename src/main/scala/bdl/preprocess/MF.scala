@@ -54,10 +54,6 @@ object MF {
       }
   }
   
-  def getPartitionID(record: Record, numRowBlocks: Int, numColBlocks: Int): Int = {
-    (record.rowIdx%numRowBlocks)*numColBlocks + record.colIdx%numColBlocks
-  }
-  
   def getPartitionMap(length: Int, numBlocks: Int, seed: Long): Array[Byte] = {
     val partitionMap = Array.ofDim[Byte](length)
     val random = new Random(seed)
@@ -76,6 +72,35 @@ object MF {
     }
     partitionMap
   }
+  
+  def getPartitionMap(numRows: Int, numRowBlocks: Int, rowRepilcaRatio: Float) 
+    : Array[Array[Byte]] = {
+    val rowPartitionMap = Array.ofDim[Array[Byte]](numRows)
+    val random = new Random(1L)
+    val stats = Array.ofDim[Int](numRowBlocks)
+    var r = 0; var ratio = 0f; var id : Byte = 0x00
+    val partitionIDs = new HashSet[Byte]()
+    while (r < numRows) {
+      partitionIDs.clear
+      ratio = rowRepilcaRatio
+      while (random.nextFloat < ratio) {
+        do {
+          id = (random.nextFloat*numRowBlocks).toByte
+        } while (partitionIDs.contains(id))
+        partitionIDs += id
+        stats(id) += 1
+        ratio -= 1f
+      }
+      rowPartitionMap(r) = partitionIDs.toArray
+      r += 1
+    }
+    var i = 0; while (i<stats.length) { 
+      println("block " + i + " has " + stats(i) + " elements")
+      i += 1
+    }
+    rowPartitionMap
+  }
+
   
   def getPartitionedData(records: RDD[Record], numColBlocks: Int,
       rowPartitionMap: Broadcast[Array[Byte]], 
@@ -120,7 +145,6 @@ object MF {
       numRowBlocks: Int, numColBlocks: Int, 
       part: Partitioner, syn: Boolean, mean: Float, scale: Float)
     : RDD[(Int, SparseMatrix)] = {
-    
     if (syn) {
       val rawTrainingData =
         sc.objectFile[((Int, Int), (Array[Int], Array[Int], Array[Float]))](inputDir)
@@ -128,8 +152,8 @@ object MF {
     }
     else if (inputDir.toLowerCase().contains("ml")) {
       val tuples = sc.sequenceFile[NullWritable, Record](inputDir)
-        .map(pair => 
-          new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
+      .map(pair => 
+        new Record(pair._2.rowIdx, pair._2.colIdx, (pair._2.value-mean)/scale))
       getPartitionedData(tuples, numColBlocks, rowBlockMap, colBlockMap, part)
     }
     else {

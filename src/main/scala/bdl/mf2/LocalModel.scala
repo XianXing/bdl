@@ -42,19 +42,19 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
   }
   
   def train(data: SparseMatrix, optType: OptimizerType, maxIter: Int, stopCrt: Float,
-      emBayes: Boolean, multicore: Boolean, 
+      isVB: Boolean, weightedReg: Boolean, multicore: Boolean, 
       priorsR: Array[Array[Float]], priorsC: Array[Array[Float]])
     : LocalModel = {
     numIter = optType match {
-      case CD => runCD(data, maxIter, stopCrt, multicore, 
-        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC, !emBayes)
-      case CDPP => runCDPP(data, maxIter, 1, stopCrt, multicore, 
-        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC, !emBayes)
+      case CD => runCD(data, maxIter, stopCrt, isVB, weightedReg, multicore, 
+        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC)
+      case CDPP => runCDPP(data, maxIter, 1, stopCrt, isVB, weightedReg, multicore,
+        priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC)
       case _ => {System.err.println("only supports CD and CDPP"); 0}
     }
-    if (emBayes) {
-      updateGamma(factorsR, precsR, priorsR, gammaR)
-      updateGamma(factorsC, precsC, priorsC, gammaC)
+    if (!weightedReg) {
+      if (precsR != null) updateGamma(factorsR, precsR, priorsR, gammaR)
+      if (precsC != null) updateGamma(factorsC, precsC, priorsC, gammaC)
     }
     this
   }
@@ -62,9 +62,10 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
 
 object LocalModel {
   
-  def apply (numFactors: Int, rowMap: Array[Int], colMap: Array[Int],
-      gamma_r_init: Float, gamma_c_init: Float,
-      ecR: Boolean, ecC: Boolean, isVB: Boolean) : LocalModel = {
+  def apply (numFactors: Int, rowMap: Array[Int], colMap: Array[Int], 
+      rowPtr: Array[Int], colPtr: Array[Int], gamma_r_init: Float, gamma_c_init: Float,
+      ecR: Boolean, ecC: Boolean, isVB: Boolean, weightedReg: Boolean)
+    : LocalModel = {
     
     def hash(x: Int): Int = {
       val r = x ^ (x >>> 20) ^ (x >>> 12)
@@ -86,11 +87,25 @@ object LocalModel {
       r += 1
     }
     val factorsC = Array.ofDim[Float](numFactors, numCols)
+    val gammaR = 
+      if (weightedReg) getWeightedReg(rowPtr, gamma_r_init)
+      else Array.fill(numFactors)(gamma_r_init)
+    val gammaC = 
+      if (weightedReg) getWeightedReg(colPtr, gamma_c_init)
+      else Array.fill(numFactors)(gamma_c_init)
     val precsR = 
-      if (isVB) Array.fill(numFactors, numRows)(gamma_r_init)
+      if (isVB) {
+//        if (weightedReg) Array.tabulate(numFactors, numRows)((k, r) => gammaR(r))
+        if (weightedReg) Array.fill(numFactors, numRows)(Float.PositiveInfinity)
+        else Array.tabulate(numFactors, numRows)((k, r) => gammaR(k))
+      }
       else null
     val precsC = 
-      if (isVB) Array.fill(numFactors, numCols)(gamma_c_init)
+      if (isVB) {
+//        if (weightedReg) Array.tabulate(numFactors, numCols)((k, c) => gammaC(c))
+        if (weightedReg) Array.fill(numFactors, numCols)(Float.PositiveInfinity)
+        else Array.tabulate(numFactors, numCols)((k, c) => gammaC(k))
+      }
       else null
     val lagsR = 
       if (ecR) Array.ofDim[Float](numFactors, numRows)
@@ -98,8 +113,6 @@ object LocalModel {
     val lagsC = 
       if (ecC) Array.ofDim[Float](numFactors, numCols)
       else null
-    val gammaR = Array.fill(numFactors)(gamma_r_init)
-    val gammaC = Array.fill(numFactors)(gamma_c_init)
     new LocalModel(factorsR, factorsC, precsR, precsC, lagsR, lagsC, gammaR, gammaC, 0)
   }
   
@@ -133,6 +146,7 @@ object LocalModel {
     : Array[(Int, (Vector, Vector))] = {
     
     val length = factors(0).length
+    val longGamma = gamma.length == length
     val numFactors = factors.length
     val isEC = lags != null
     val statsR = new Array[(Int, (Vector, Vector))](length)
@@ -142,10 +156,11 @@ object LocalModel {
         val deno = new Array[Float](numFactors)
         var k = 0
         while (k < numFactors) {
+          val ga = if (longGamma) gamma(r) else gamma(k)
           nume(k) = 
-            if (isEC) (factors(k)(r)+lags(k)(r))*gamma(k) 
-            else factors(k)(r)*gamma(k)
-          deno(k) = gamma(k)
+            if (isEC) (factors(k)(r)+lags(k)(r))*ga 
+            else factors(k)(r)*ga
+          deno(k) = ga
           k += 1
         }
         statsR(r) = (map(r), (Vector(nume), Vector(deno)))
@@ -158,10 +173,11 @@ object LocalModel {
         val deno = new Array[Float](numFactors)
         var k = 0
         while (k < numFactors) {
+          val ga = if (longGamma) gamma(r) else gamma(k)
           nume(k) = 
-            if (isEC) (factors(k)(r)+lags(k)(r))*gamma(k) 
-            else factors(k)(r)*gamma(k)
-          deno(k) = gamma(k)
+            if (isEC) (factors(k)(r)+lags(k)(r))*ga 
+            else factors(k)(r)*ga
+          deno(k) = ga
           k += 1
         }
         statsR(r) = (map(r), (Vector(nume), Vector(deno)))
@@ -203,4 +219,15 @@ object LocalModel {
       }
     }
   } //end of updateLag
+  
+  def getWeightedReg(ptr: Array[Int], regInit: Float): Array[Float] = {
+    val length = ptr.length - 1
+    val reg = new Array[Float](length)
+    var l = 0
+    while (l < length) {
+      reg(l) = (ptr(l+1)-ptr(l))*regInit
+      l += 1
+    }
+    reg
+  }
 }

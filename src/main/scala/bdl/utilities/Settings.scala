@@ -124,10 +124,12 @@ object Settings {
   val MEM_OPTION = "memory"
   val NUM_OUTPUT_BLOCKS_OPTION = "num_output_blocks"
   val REG_PARA_OPTION = "reg_para"  
-  val SUMSAMPLE_RATE_OPTION = "ss_rate"
+  val SUBSAMPLE_RATE_OPTION = "ss_rate"
   val MODEL_OPTION = "model"
   val OPTIMIZER_OPTION = "opt"
   val REGULARIZER_OPTION = "reg"
   val VARIATIONAL_OPTION = "var"
   val STOPPING_CRITERIA_OPTION = "stop_crt"
+  val MORE_PARA_OPTION = "more_para"
+  val WEIGHTED_REG_OPTION = "weighted_reg"
 }
