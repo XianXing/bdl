@@ -26,9 +26,19 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
     LocalModel.getStats(factorsR, lagsR, gammaR, map, multicore)
   }
   
+  def getStatsR(map: Array[Int], ptr: Array[Int], multicore: Boolean)
+    : Array[(Int, (Vector, Vector))] = {
+    LocalModel.getStats(factorsR, lagsR, gammaR, map, ptr, multicore)
+  }
+  
   def getStatsC(map: Array[Int], multicore: Boolean)
     : Array[(Int, (Vector, Vector))] = {
     LocalModel.getStats(factorsC, lagsC, gammaC, map, multicore)
+  }
+  
+  def getStatsC(map: Array[Int], ptr: Array[Int], multicore: Boolean)
+    : Array[(Int, (Vector, Vector))] = {
+    LocalModel.getStats(factorsC, lagsC, gammaC, map, ptr, multicore)
   }
   
   def updateLagR(priorsR: Array[Array[Float]], multicore: Boolean): LocalModel = {
@@ -42,7 +52,7 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
   }
   
   def train(data: SparseMatrix, optType: OptimizerType, maxIter: Int, stopCrt: Float,
-      isVB: Boolean, weightedReg: Boolean, multicore: Boolean, 
+      isVB: Boolean, emBayes: Boolean, weightedReg: Boolean, multicore: Boolean, 
       priorsR: Array[Array[Float]], priorsC: Array[Array[Float]])
     : LocalModel = {
     numIter = optType match {
@@ -52,9 +62,11 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
         priorsR, factorsR, precsR, gammaR, priorsC, factorsC, precsC, gammaC)
       case _ => {System.err.println("only supports CD and CDPP"); 0}
     }
-    if (!weightedReg) {
-      if (precsR != null) updateGamma(factorsR, precsR, priorsR, gammaR)
-      if (precsC != null) updateGamma(factorsC, precsC, priorsC, gammaC)
+    if (emBayes) {
+      if (weightedReg) updateGamma(factorsR, precsR, priorsR, data.row_ptr, gammaR)
+      else updateGamma(factorsR, precsR, priorsR, gammaR)
+      if (weightedReg) updateGamma(factorsC, precsC, priorsC, data.col_ptr, gammaC)
+      else updateGamma(factorsC, precsC, priorsC, gammaC)
     }
     this
   }
@@ -87,12 +99,8 @@ object LocalModel {
       r += 1
     }
     val factorsC = Array.ofDim[Float](numFactors, numCols)
-    val gammaR = 
-      if (weightedReg) getWeightedReg(rowPtr, gamma_r_init)
-      else Array.fill(numFactors)(gamma_r_init)
-    val gammaC = 
-      if (weightedReg) getWeightedReg(colPtr, gamma_c_init)
-      else Array.fill(numFactors)(gamma_c_init)
+    val gammaR = Array.fill(numFactors)(gamma_r_init)
+    val gammaC = Array.fill(numFactors)(gamma_c_init)
     val precsR = 
       if (isVB) {
 //        if (weightedReg) Array.tabulate(numFactors, numRows)((k, r) => gammaR(r))
@@ -146,7 +154,6 @@ object LocalModel {
     : Array[(Int, (Vector, Vector))] = {
     
     val length = factors(0).length
-    val longGamma = gamma.length == length
     val numFactors = factors.length
     val isEC = lags != null
     val statsR = new Array[(Int, (Vector, Vector))](length)
@@ -156,7 +163,7 @@ object LocalModel {
         val deno = new Array[Float](numFactors)
         var k = 0
         while (k < numFactors) {
-          val ga = if (longGamma) gamma(r) else gamma(k)
+          val ga = gamma(k)
           nume(k) = 
             if (isEC) (factors(k)(r)+lags(k)(r))*ga 
             else factors(k)(r)*ga
@@ -173,7 +180,55 @@ object LocalModel {
         val deno = new Array[Float](numFactors)
         var k = 0
         while (k < numFactors) {
-          val ga = if (longGamma) gamma(r) else gamma(k)
+          val ga = gamma(k)
+          nume(k) = 
+            if (isEC) (factors(k)(r)+lags(k)(r))*ga 
+            else factors(k)(r)*ga
+          deno(k) = ga
+          k += 1
+        }
+        statsR(r) = (map(r), (Vector(nume), Vector(deno)))
+        r += 1
+      }
+    }
+    statsR
+  } // end of getStats
+  
+  
+  def getStats(factors: Array[Array[Float]], lags: Array[Array[Float]],
+      gamma: Array[Float], map: Array[Int], ptr: Array[Int], multicore: Boolean)
+    : Array[(Int, (Vector, Vector))] = {
+    
+    val length = factors(0).length
+    val numFactors = factors.length
+    val isEC = lags != null
+    val statsR = new Array[(Int, (Vector, Vector))](length)
+    if (multicore) {
+      for (r <- (0 until length).par) {
+        val nume = new Array[Float](numFactors)
+        val deno = new Array[Float](numFactors)
+        val weight = ptr(r+1)-ptr(r)
+        var k = 0
+        while (k < numFactors) {
+          val ga = gamma(k)*weight
+          nume(k) = 
+            if (isEC) (factors(k)(r)+lags(k)(r))*ga 
+            else factors(k)(r)*ga
+          deno(k) = ga
+          k += 1
+        }
+        statsR(r) = (map(r), (Vector(nume), Vector(deno)))
+      }
+    }
+    else {
+      var r = 0
+      while (r < length) {
+        val nume = new Array[Float](numFactors)
+        val deno = new Array[Float](numFactors)
+        val weight = ptr(r+1)-ptr(r)
+        var k = 0
+        while (k < numFactors) {
+          val ga = gamma(k)*weight
           nume(k) = 
             if (isEC) (factors(k)(r)+lags(k)(r))*ga 
             else factors(k)(r)*ga

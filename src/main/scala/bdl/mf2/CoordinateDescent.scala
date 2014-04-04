@@ -43,7 +43,9 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
-            val gamma = if (weightedReg) gammaC(c) else gammaC(k)
+            val gamma = 
+              if (weightedReg) gammaC(k)*(col_ptr(c+1)-col_ptr(c)) 
+              else gammaC(k)
             if (isVB) {
               update(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                 prior, gamma, factorsC(k), precsC(k))
@@ -62,7 +64,9 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
-            val gamma = if (weightedReg) gammaR(r) else gammaR(k)
+            val gamma = 
+              if (weightedReg) gammaR(k)*(row_ptr(r+1)-row_ptr(r)) 
+              else gammaR(k)
             if (isVB) {
               update(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                 prior, gamma, factorsR(k), precsR(k))
@@ -84,7 +88,9 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
-            val gamma = if (weightedReg) gammaC(c) else gammaC(k)
+            val gamma = 
+              if (weightedReg) gammaC(k)*(col_ptr(c+1)-col_ptr(c)) 
+              else gammaC(k)
             if (isVB) {
               update(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                 prior, gamma, factorsC(k), precsC(k))
@@ -104,7 +110,9 @@ object CoordinateDescent {
           var k = 0
           while (k<numFactors) {
             val prior = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
-            val gamma = if (weightedReg) gammaR(r) else gammaR(k)
+            val gamma = 
+              if (weightedReg) gammaR(k)*(row_ptr(r+1)-row_ptr(r)) 
+              else gammaR(k)
             if (isVB) {
               update(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                 prior, gamma, factorsR(k), precsR(k))
@@ -167,7 +175,9 @@ object CoordinateDescent {
           if (multicore) {
             cols.par.map(c => {
               val priorC = if (hasPriorsC && priorsC(c)!=null) priorsC(c)(k) else 0
-              val gamma = if (weightedReg) gammaC(c) else gammaC(k)
+              val gamma = 
+                if (weightedReg) gammaC(k)*(col_ptr(c+1)-col_ptr(c)) 
+                else gammaC(k)
               if (isVB) {
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                   priorC, gamma, factorsC(k), precsC(k))
@@ -179,7 +189,9 @@ object CoordinateDescent {
             })
             rows.par.map(r => {
               val priorR = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
-              val gamma = if (weightedReg) gammaR(r) else gammaR(k)
+              val gamma = 
+                if (weightedReg) gammaR(k)*(row_ptr(r+1)-row_ptr(r)) 
+                else gammaR(k)
               if (isVB) {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                   priorR, gamma, factorsR(k), precsR(k))
@@ -194,7 +206,9 @@ object CoordinateDescent {
             var c = 0
             while (c < numCols) {
               val priorC = if (hasPriorsC && priorsC(c) != null) priorsC(c)(k) else 0
-              val gamma = if (weightedReg) gammaC(c) else gammaC(k)
+              val gamma = 
+                if (weightedReg) gammaC(k)*(col_ptr(c+1)-col_ptr(c)) 
+                else gammaC(k)
               if (isVB) {
                 updatepp(c, col_ptr, row_idx, res_c, factorsR(k), precsR(k),
                   priorC, gamma, factorsC(k), precsC(k))
@@ -208,7 +222,9 @@ object CoordinateDescent {
             var r = 0
             while (r < numRows) {
               val priorR = if (hasPriorsR && priorsR(r) != null) priorsR(r)(k) else 0
-              val gamma = if (weightedReg) gammaR(r) else gammaR(k)
+              val gamma = 
+                if (weightedReg) gammaR(k)*(row_ptr(r+1)-row_ptr(r)) 
+                else gammaR(k)
               if (isVB) {
                 updatepp(r, row_ptr, col_idx, res_r, factorsC(k), precsC(k),
                   priorR, gamma, factorsR(k), precsR(k))
@@ -406,7 +422,7 @@ object CoordinateDescent {
   
   def getReg(ptrs: Array[Int], factors: Array[Array[Float]], 
       priors: Array[Array[Float]], gammas: Array[Float], 
-      weightedPara: Boolean = false, multicore: Boolean = false): Float = {
+      weightedReg: Boolean = false, multicore: Boolean = false): Float = {
     val numFactors = factors.length
     val length = factors(0).length
     if (multicore) {
@@ -418,7 +434,7 @@ object CoordinateDescent {
           val diff = 
             if (priors != null && priors(l) != null) factor(l) - priors(l)(k)
             else factor(l)
-          if (weightedPara) sum += (ptrs(l+1)-ptrs(l))*diff*diff
+          if (weightedReg) sum += (ptrs(l+1)-ptrs(l))*diff*diff
           else sum += diff*diff
           l += 1
         }
@@ -435,7 +451,7 @@ object CoordinateDescent {
           val diff = 
             if (priors != null && priors(l) != null) factor(l) - priors(l)(k)
             else factor(l)
-          if (weightedPara) sumK += (ptrs(l+1)-ptrs(l))*diff*diff
+          if (weightedReg) sumK += (ptrs(l+1)-ptrs(l))*diff*diff
           else sumK += diff*diff
           l += 1
         }
@@ -459,6 +475,26 @@ object CoordinateDescent {
           if (priors == null || priors(r) == null) means(k)(r) 
           else means(k)(r) - priors(r)(k)
         denominator += res*res + 1/precisions(k)(r)
+        r += 1
+      }
+      gamma(k) = (numRows-1+0.01f)/(denominator+0.01f)
+      k += 1
+    }
+  } //end of updateGamma
+  
+  def updateGamma(means: Array[Array[Float]], precisions: Array[Array[Float]],
+      priors: Array[Array[Float]], ptr: Array[Int], gamma: Array[Float]) {
+    val numFactors = means.length
+    val numRows = means(0).length
+    var k = 0
+    while (k < numFactors) {
+      var r = 0
+      var denominator = 0f
+      while (r < numRows) {
+        val res = 
+          if (priors == null || priors(r) == null) means(k)(r)
+          else means(k)(r) - priors(r)(k)
+        denominator += (res*res + 1/precisions(k)(r))*(ptr(r+1)-ptr(r))
         r += 1
       }
       gamma(k) = (numRows-1+0.01f)/(denominator+0.01f)

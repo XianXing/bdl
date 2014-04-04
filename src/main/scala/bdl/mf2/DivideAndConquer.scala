@@ -28,8 +28,8 @@ class DivideAndConquer (
     val numRowBlocks: Int, val numColBlocks: Int,
     val hasRowEC: Boolean, val hasColEC: Boolean, 
     val hasRowPrior: Boolean, val hasColPrior: Boolean,
-    val isVB: Boolean, val weightedReg: Boolean, val multicore: Boolean,
-    var stopCrt: Float, val numIters: Array[Int])
+    val isVB: Boolean, val emBayes: Boolean, val weightedReg: Boolean, 
+    val multicore: Boolean, var stopCrt: Float, val numIters: Array[Int])
   extends Model(factorsR, factorsC) {
   
   override def setStopCrt(stopCrt: Float) = {
@@ -46,7 +46,7 @@ class DivideAndConquer (
     new DivideAndConquer(updatedFactorsR, updatedFactorsC, updatedLocalModels,
         trainingData, nnzTra, validatingData, nnzVal, mapsR, mapsC, pidsR, pidsC, 
         numRowBlocks, numColBlocks, hasRowEC, hasColEC, hasRowPrior, hasColPrior,
-        isVB, weightedReg, multicore, stopCrt, numIters)
+        isVB, emBayes, weightedReg, multicore, stopCrt, numIters)
   }
   
   override def init(numIter: Int, optType: OptimizerType, 
@@ -54,7 +54,7 @@ class DivideAndConquer (
     val (updatedFactorsR, updatedFactorsC, updatedLocalModels, numIters) = 
       DivideAndConquer.train(trainingData, factorsR, factorsC, localModels, 
         pidsR, pidsC, mapsR, mapsC, numIter, stopCrt, optType, regPara, regType, 
-        numRowBlocks, numColBlocks, false, false, false, false, false, 
+        numRowBlocks, numColBlocks, false, false, false, false, false, false, 
         weightedReg, multicore)
     createNewModel(updatedFactorsR, updatedFactorsC, updatedLocalModels, numIters)
   }
@@ -64,8 +64,8 @@ class DivideAndConquer (
     val (updatedFactorsR, updatedFactorsC, updatedLocalModels, numIters) = 
       DivideAndConquer.train(trainingData, factorsR, factorsC, localModels, 
         pidsR, pidsC, mapsR, mapsC, numIter, stopCrt, optType, regPara, regType, 
-        numRowBlocks, numColBlocks,
-        hasRowEC, hasColEC, hasRowPrior, hasColPrior, isVB, weightedReg, multicore)
+        numRowBlocks, numColBlocks, hasRowEC, hasColEC, hasRowPrior, hasColPrior, 
+        isVB, emBayes, weightedReg, multicore)
     createNewModel(updatedFactorsR, updatedFactorsC, updatedLocalModels, numIters)
   }
   
@@ -129,8 +129,8 @@ object DivideAndConquer {
       numRows: Int, numCols: Int, numRowBlocks: Int, numColBlocks: Int, 
       numCores: Int, syn: Boolean, mean: Float, scale: Float,
       numFactors: Int, gammaRInit: Float, gammaCInit: Float,
-      isEC: Boolean, hasPrior: Boolean, isVB: Boolean, weightedReg: Boolean, 
-      multicore: Boolean, bwLog: BufferedWriter)
+      isEC: Boolean, hasPrior: Boolean, isVB: Boolean, emBayes: Boolean,
+      weightedReg: Boolean, multicore: Boolean, bwLog: BufferedWriter)
     : DivideAndConquer = {
     
     def hash(x: Int): Int = {
@@ -208,7 +208,7 @@ object DivideAndConquer {
         mapsR, mapsC, pidsR, pidsC, 
         numRowBlocks, numColBlocks,
         hasRowEC, hasColEC, hasRowPrior, hasColPrior,
-        isVB, weightedReg, multicore, 0, numIters)
+        isVB, emBayes, weightedReg, multicore, 0, numIters)
   }
   
   private def train(
@@ -221,7 +221,7 @@ object DivideAndConquer {
       optType: OptimizerType, regPara: Float, regType: RegularizerType,
       numRowBlocks: Int, numColBlocks: Int,
       hasRowEC: Boolean, hasColEC: Boolean, hasRowPrior: Boolean, hasColPrior: Boolean,
-      isVB: Boolean, weightedReg: Boolean, multicore: Boolean)
+      isVB: Boolean, emBayes: Boolean, weightedReg: Boolean, multicore: Boolean)
     : (RDD[(Int, Array[Float])], RDD[(Int, Array[Float])], RDD[(Int, LocalModel)], 
         Array[Int]) = {
     
@@ -241,8 +241,8 @@ object DivideAndConquer {
             //inplace dual update using sideeffect
             if (hasRowEC) localModel.updateLagR(priorsR, multicore)
             if (hasColEC) localModel.updateLagC(priorsC, multicore)
-            localModel.train(localData, optType, numIter, stopCrt, isVB, weightedReg, 
-              multicore, priorsR, priorsC)
+            localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
+              weightedReg, multicore, priorsR, priorsC)
           }
         }
       }
@@ -251,8 +251,8 @@ object DivideAndConquer {
           case(((localData, localModel), factorsR)) => {
             val priorsR = DivideAndConquer.toLocal(factorsR, localData.rowMap, null)
             if (hasRowEC) localModel.updateLagR(priorsR, multicore)
-            localModel.train(localData, optType, numIter, stopCrt, isVB, weightedReg, 
-              multicore, priorsR, priorsC = null)
+            localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
+              weightedReg, multicore, priorsR, priorsC = null)
           }
         }
       }
@@ -261,16 +261,16 @@ object DivideAndConquer {
           case(((localData, localModel), factorsC)) => {
             val priorsC = DivideAndConquer.toLocal(factorsC, localData.colMap, null)
             if (hasColEC) localModel.updateLagC(priorsC, multicore)
-            localModel.train(localData, optType, numIter, stopCrt, isVB, weightedReg, 
-              multicore, priorsR = null, priorsC)
+            localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
+              weightedReg, multicore, priorsR = null, priorsC)
           }
         }
       }
       else {
         data.join(localModels).mapValues{
           case((localData, localModel)) => {
-            localModel.train(localData, optType, numIter, stopCrt, isVB, weightedReg, 
-              multicore, priorsR = null, priorsC = null)
+            localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
+              weightedReg, multicore, priorsR = null, priorsC = null)
           }
         }
       }
@@ -283,9 +283,12 @@ object DivideAndConquer {
     // update the global parameters
     val updatedFactorsR = 
       if (numColBlocks > 1) {
-        val stats = updatedLocalModels.join(mapsR).flatMap{
-          case((pid, (localModel, mapR))) => 
-            localModel.getStatsR(mapR, multicore)
+        val stats = updatedLocalModels.join(data).flatMap{
+          case((pid, (localModel, localData))) => 
+            if (weightedReg) {
+              localModel.getStatsC(localData.rowMap, localData.row_ptr, multicore)
+            }
+            else localModel.getStatsR(localData.rowMap, multicore)
         }
         updateGlobalFactors(stats, pidsR, regType, regPara)
       }
@@ -300,9 +303,12 @@ object DivideAndConquer {
     if (factorsR != null && hasRowPrior) factorsR.unpersist(true)
     val updatedFactorsC = 
       if (numRowBlocks > 1) {
-        val stats = updatedLocalModels.join(mapsC).flatMap{
-          case((pid, (localModel, mapC))) => 
-            localModel.getStatsC(mapC, multicore)
+        val stats = updatedLocalModels.join(data).flatMap{
+          case((pid, (localModel, localData))) => 
+            if (weightedReg) {
+              localModel.getStatsC(localData.colMap, localData.col_ptr, multicore)
+            }
+            else localModel.getStatsC(localData.colMap, multicore)
         }
         updateGlobalFactors(stats, pidsC, regType, regPara)
       } else {
