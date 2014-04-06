@@ -286,7 +286,7 @@ object DivideAndConquer {
         val stats = updatedLocalModels.join(data).flatMap{
           case((pid, (localModel, localData))) => 
             if (weightedReg) {
-              localModel.getStatsC(localData.rowMap, localData.row_ptr, multicore)
+              localModel.getStatsR(localData.rowMap, localData.row_ptr, multicore)
             }
             else localModel.getStatsR(localData.rowMap, multicore)
         }

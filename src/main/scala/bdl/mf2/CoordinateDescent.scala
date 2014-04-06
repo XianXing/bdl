@@ -497,7 +497,8 @@ object CoordinateDescent {
         denominator += (res*res + 1/precisions(k)(r))*(ptr(r+1)-ptr(r))
         r += 1
       }
-      gamma(k) = (numRows-1+0.01f)/(denominator+0.01f)
+      //gamma can only increase
+      gamma(k) = math.max((numRows-1+0.01f)/(denominator+0.01f), gamma(k))
       k += 1
     }
   } //end of updateGamma
