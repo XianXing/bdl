@@ -487,9 +487,10 @@ object CoordinateDescent {
     val numFactors = means.length
     val numRows = means(0).length
     var k = 0
+    var denominator = 0f
     while (k < numFactors) {
       var r = 0
-      var denominator = 0f
+//      denominator = 0f
       while (r < numRows) {
         val res = 
           if (priors == null || priors(r) == null) means(k)(r)
@@ -497,8 +498,13 @@ object CoordinateDescent {
         denominator += (res*res + 1/precisions(k)(r))*(ptr(r+1)-ptr(r))
         r += 1
       }
-      //gamma can only increase
-      gamma(k) = math.max((numRows-1+0.01f)/(denominator+0.01f), gamma(k))
+//      gamma(k) = (numRows-1+0.01f)/(denominator+0.01f)
+      k += 1
+    }
+    val gammaNew = (numRows*numFactors-1+0.01f)/(denominator+0.01f)
+    k = 0
+    while (k < numFactors) {
+      gamma(k) = gammaNew
       k += 1
     }
   } //end of updateGamma

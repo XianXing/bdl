@@ -54,8 +54,8 @@ class DivideAndConquer (
     val (updatedFactorsR, updatedFactorsC, updatedLocalModels, numIters) = 
       DivideAndConquer.train(trainingData, factorsR, factorsC, localModels, 
         pidsR, pidsC, mapsR, mapsC, numIter, stopCrt, optType, regPara, regType, 
-        numRowBlocks, numColBlocks, false, false, false, false, false, false, 
-        weightedReg, multicore)
+        numRowBlocks, numColBlocks, false, false, false, false, 
+        isVB = false, emBayes = false, weightedReg, multicore)
     createNewModel(updatedFactorsR, updatedFactorsC, updatedLocalModels, numIters)
   }
   

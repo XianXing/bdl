@@ -109,7 +109,7 @@ object DistributedGradient{
       .persist(storageLevel)
     val partitioner = new HashPartitioner(numBlocks)
     val recordsByRowBlock = trainingRecords.map{
-      record => (record.rowIdx % numBlocks, record) 
+      record => (record.rowIdx % numBlocks, record)
     }.groupByKey(partitioner)
     val recordsByColBlock = trainingRecords.map{ 
       record => (record.colIdx % numBlocks, 
@@ -124,14 +124,13 @@ object DistributedGradient{
     val seedGen = new Random()
     val rowSeed = seedGen.nextInt()
     val colSeed = seedGen.nextInt()
-    val precInit = if (weightedReg) Float.PositiveInfinity else regPara
     val rowBlockedParas = 
-      if (isVB) initParas(rowOutLinks, numFactors, precInit, rowSeed)
+      if (isVB) initVBParas(rowInLinks, numFactors, regPara, rowSeed)
       else initParas(rowOutLinks, numFactors, rowSeed)
     rowBlockedParas.cache
     rowBlockedParas.count
     val colBlockedParas = 
-      if (isVB) initParas(colOutLinks, numFactors, precInit, colSeed)
+      if (isVB) initVBParas(colInLinks, numFactors, regPara, colSeed)
       else initParas(colOutLinks, numFactors, colSeed)
     colBlockedParas.cache
     colBlockedParas.count
@@ -208,7 +207,7 @@ object DistributedGradient{
     OutLinkBlock(rowIds, shouldSend)
   }
   
-  private def makeLinkRDDs(numBlocks: Int, groupedRecords: RDD[(Int, Seq[Record])])
+  private def makeLinkRDDs(numBlocks: Int, groupedRecords: RDD[(Int, Iterable[Record])])
     : RDD[(Int, (InLinkBlock, OutLinkBlock))] = {
     groupedRecords.mapValues(records => {
       val recordsArr = records.toArray
@@ -266,7 +265,7 @@ object DistributedGradient{
         case ((colFactorsBuf, colPrecisionBuf), rowBID) => 
           (rowBID, (colBID, (colFactorsBuf.toArray, colPrecisionBuf.toArray))) 
       }
-    }.groupByKey(partitioner)
+    }.groupByKey(partitioner).mapValues(_.toArray)
     
     optimizerType match {
       case ALS => colBlockedMessages.join(rowInLinks).mapValues{ 
@@ -457,16 +456,18 @@ object DistributedGradient{
     }
   }
   
-  def initParas(outLinks: RDD[(Int, OutLinkBlock)], numFactors:Int, precInit: Float,
+  def initVBParas(inLinks: RDD[(Int, InLinkBlock)], numFactors:Int, reg: Float, 
       seed: Int): RDD[(Int, (Array[Array[Float]], Array[Array[Float]]))] = {
-    outLinks.mapPartitionsWithIndex { (index, itr) =>
+    
+    inLinks.mapPartitionsWithIndex{ (index, itr) =>
       val rand = new Random(hash(seed ^ index))
-      itr.map { case (x, y) =>
-        (x, (
-          y.elementIds.map(_ =>(Array.fill(numFactors)(0.1f*(rand.nextFloat)))),
-          y.elementIds.map(_ => (Array.fill(numFactors)(precInit)))
-          )
-        )
+      itr.map{ case (bid, inLinkBlock) =>
+        val length = inLinkBlock.elementIds.length
+        val factors = Array.fill(length, numFactors)(0.1f*(rand.nextFloat))
+        val numObs = new Array[Int](length)
+        inLinkBlock.ratingsForBlock.foreach(_.foreach(_._1.foreach(numObs(_) += 1)))
+        val precisions = Array.tabulate(length, numFactors)((i, j) => reg*numObs(i))
+        (bid, (factors, precisions))
       }
     }
   }

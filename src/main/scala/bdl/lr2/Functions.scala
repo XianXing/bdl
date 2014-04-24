@@ -8,7 +8,7 @@ import utilities.SparseMatrix
 import utilities.SparseVector
 import utilities.DoubleVector
 import utilities.IntVector
-import utilities.Math
+import utilities.MathFunctions
 import classification.RegularizerType._
 
 object Functions {
@@ -102,7 +102,7 @@ object Functions {
     val isBinary = value == null
     var n = 0 
     while (n < numData) {
-      ywtx(n) = Math.sigmoid(ywtx(n))
+      ywtx(n) = MathFunctions.sigmoid(ywtx(n))
       n += 1
     }
     var p = 0
@@ -170,7 +170,7 @@ object Functions {
     var n = 0
     var hessian = 0.0
     while (n < numData) {
-      val sigmoid = Math.sigmoid(wtx(n))
+      val sigmoid = MathFunctions.sigmoid(wtx(n))
       val alpha = sigmoid*(1-sigmoid)
       if (alpha > 1e-5f) hessian += alpha*utx(n)*utx(n)
       else hessian += 1e-5f*utx(n)*utx(n)
@@ -187,7 +187,7 @@ object Functions {
     
     def getBinPred(features: SparseVector, weights:Array[Double], numBins: Int)
       : IntVector = {
-      val prob = Math.sigmoid(features.dot(DoubleVector(weights)))
+      val prob = MathFunctions.sigmoid(features.dot(DoubleVector(weights)))
       val inc = 1.0/numBins
       IntVector(Array.tabulate(numBins)(i => if (prob > (i-1)*inc) 1 else 0 ))
     }

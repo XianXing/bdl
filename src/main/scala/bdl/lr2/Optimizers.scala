@@ -1,7 +1,7 @@
 package lr2
 
 import utilities.SparseMatrix
-import utilities.Math
+import utilities.MathFunctions
 import classification.OptimizerType._
 import classification.VariationalType._
 
@@ -249,7 +249,7 @@ object Optimizers {
     while (n < numData) {
       val wtx = coefA(n)
       val xi = math.sqrt(wtx*wtx + residual(n)).toFloat
-      coefA(n) = if (xi < 1e-3f) 0.25f else (Math.sigmoid(xi)-0.5f)/xi
+      coefA(n) = if (xi < 1e-3f) 0.25f else (MathFunctions.sigmoid(xi)-0.5f)/xi
       residual(n) =  labels(n)/2 - coefA(n)*wtx
       n += 1
     }

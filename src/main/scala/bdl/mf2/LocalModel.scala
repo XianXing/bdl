@@ -103,15 +103,19 @@ object LocalModel {
     val gammaC = Array.fill(numFactors)(gamma_c_init)
     val precsR = 
       if (isVB) {
-//        if (weightedReg) Array.tabulate(numFactors, numRows)((k, r) => gammaR(r))
-        if (weightedReg) Array.fill(numFactors, numRows)(Float.PositiveInfinity)
+        if (weightedReg) {
+          val numObs = getNumObs(rowPtr)
+          Array.tabulate(numFactors, numRows)((k, r) => gammaR(k)*numObs(r))
+        }
         else Array.tabulate(numFactors, numRows)((k, r) => gammaR(k))
       }
       else null
     val precsC = 
       if (isVB) {
-//        if (weightedReg) Array.tabulate(numFactors, numCols)((k, c) => gammaC(c))
-        if (weightedReg) Array.fill(numFactors, numCols)(Float.PositiveInfinity)
+        if (weightedReg) {
+          val numObs = getNumObs(colPtr)
+          Array.tabulate(numFactors, numCols)((k, c) => gammaC(k)*numObs(c))
+        }
         else Array.tabulate(numFactors, numCols)((k, c) => gammaC(k))
       }
       else null
@@ -275,14 +279,14 @@ object LocalModel {
     }
   } //end of updateLag
   
-  def getWeightedReg(ptr: Array[Int], regInit: Float): Array[Float] = {
+  def getNumObs(ptr: Array[Int]): Array[Int] = {
     val length = ptr.length - 1
-    val reg = new Array[Float](length)
+    val numObs = new Array[Int](length)
     var l = 0
     while (l < length) {
-      reg(l) = (ptr(l+1)-ptr(l))*regInit
+      numObs(l) = ptr(l+1) - ptr(l)
       l += 1
     }
-    reg
+    numObs
   }
 }
