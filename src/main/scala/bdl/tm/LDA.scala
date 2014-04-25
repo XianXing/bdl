@@ -64,10 +64,10 @@ class LDA(val numTopics: Int,
     }
   }
   
-  private def updateGammaD(numIter: Int, wordIndices: DenseVector[Int], 
-      counts: DenseVector[Int], alpha: DenseVector[Double], 
-      expELogBeta: DenseMatrix[Double], phiNormD: DenseVector[Double], 
-      expELogThetaD: DenseVector[Double], suffStats: DenseMatrix[Double], 
+  private def updateGammaD(
+      numIter: Int, wordIndices: DenseVector[Int], counts: DenseVector[Int],
+      alpha: DenseVector[Double], expELogBeta: DenseMatrix[Double], 
+      phiNormD: DenseVector[Double], expELogThetaD: DenseVector[Double],
       gammaD: DenseVector[Double]) = {
     
     MathFunctions.eDirExp(gammaD, expELogThetaD)
@@ -78,21 +78,47 @@ class LDA(val numTopics: Int,
     val docLength = wordIndices.length
     for (inner <- 0 until numIter if (mean(abs(gammaD - lastGammaD)) > 0.001)) {
       lastGammaD := gammaD
+      gammaD := alpha
       var i = 0
       while (i < docLength) {
         dotProduct :+= expELogBeta(::, wordIndices(i)):*(counts(i)/phiNormD(i))
         i += 1
       }
-      gammaD := alpha :+ (expELogThetaD:*dotProduct)
+      gammaD :+= expELogThetaD:*dotProduct
       MathFunctions.eDirExp(gammaD, expELogThetaD)
       getPhiNorm(wordIndices, expELogThetaD, expELogBeta, phiNormD)
       dotProduct := zeros
     }
-    var i = 0
-    while (i < docLength) {
-      suffStats(::, wordIndices(i)) :+= expELogThetaD:*(counts(i)/phiNormD(i))
-      i += 1
+  }
+  
+  private def updateEtaK(docs: CSCMatrix[Int], beta0K: DenseVector[Double], 
+      phiNorm: DenseVector[Double], expELogThetaK: DenseVector[Double], 
+      expELogBetaK: DenseVector[Double], etaK: DenseVector[Double]) = {
+    val docPtrs = docs.colPtrs
+    val wordIndices = DenseVector(docs.rowIndices)
+    val counts = DenseVector(docs.data)
+    val numDocs = docs.cols
+    val numWords = docs.rows
+    var w = 0
+    while (w < numWords) {
+      etaK(w) = 0
+      w += 1
     }
+    var d = 0
+    while (d < numDocs) {
+      var ii = docPtrs(d)
+      while (ii < docPtrs(d+1)) {
+        etaK(wordIndices(ii)) += expELogThetaK(d)*counts(ii)/phiNorm(ii)
+        ii += 1
+      }
+      d += 1
+    }
+    w = 0
+    while(w < numWords) {
+      etaK(w) = etaK(w)*expELogBetaK(w) + beta0K(w)
+      w += 1
+    }
+    MathFunctions.eDirExp(etaK, expELogBetaK)
   }
   
   private def updateEtaK(beta0K: DenseVector[Double], suffStatsK: DenseVector[Double],
@@ -121,11 +147,9 @@ class LDA(val numTopics: Int,
     val docPtrs = docs.colPtrs
     val wordIndices = DenseVector(docs.rowIndices)
     val counts = DenseVector(docs.data)
-    val maxDocLength = (0 until numDocs).map(d => docPtrs(d+1) - docPtrs(d)).max
-    val expELogThetaD = DenseVector.zeros[Double](numTopics)
-    val phiNormD = DenseVector.zeros[Double](maxDocLength)
+    val expELogTheta = DenseMatrix.zeros[Double](numTopics, numDocs)
+    val phiNorm = DenseVector.zeros[Double](nnz)
     val expELogBeta = DenseMatrix.zeros[Double](numTopics, numWords)
-    val suffStats = DenseMatrix.zeros[Double](numTopics, numWords)
     val zeros = DenseVector.zeros[Double](numWords)
     val elbos = new Array[Double](numIters)
     val times = new Array[Double](numIters)
@@ -146,23 +170,21 @@ class LDA(val numTopics: Int,
         for (d <- docIndices.par) {
           val range = docPtrs(d) until docPtrs(d+1)
           updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, 
-              phiNormD, expELogThetaD, suffStats, gamma(::, d))
+              phiNorm(range), expELogTheta(::, d), gamma(::, d))
         }
         for (k <- topicIndices.par) {
-          updateEtaK(beta0(k, ::).t, suffStats(k, ::).t, expELogBeta(k, ::).t, 
-              eta(k, ::).t)
-          suffStats(k, ::).t := zeros
+          updateEtaK(docs, beta0(k, ::).t, phiNorm, expELogTheta(k, ::).t, 
+              expELogBeta(k, ::).t, eta(k, ::).t)
         }
       } else {
         for (d <- docIndices) {
           val range = docPtrs(d) until docPtrs(d+1)
           updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, 
-              phiNormD, expELogThetaD, suffStats, gamma(::, d))
+              phiNorm(range), expELogTheta(::, d), gamma(::, d))
         }
         for (k <- topicIndices) {
-          updateEtaK(beta0(k, ::).t, suffStats(k, ::).t, expELogBeta(k, ::).t, 
-              eta(k, ::).t)
-          suffStats(k, ::).t := zeros
+          updateEtaK(docs, beta0(k, ::).t, phiNorm, expELogTheta(k, ::).t, 
+              expELogBeta(k, ::).t, eta(k, ::).t)
         }
       }
       val elapsed = (System.currentTimeMillis - startTime)*0.001
@@ -286,7 +308,7 @@ object LDA {
     val numIters = 20
     val alphaInit = 50.0/numTopics
     val betaInit = 0.001
-    val multicore = false
+    val multicore = true
     val docs = toCSCMatrix(inputDocsPath)
     val numWords = docs.rows
     val numDocs = docs.cols
