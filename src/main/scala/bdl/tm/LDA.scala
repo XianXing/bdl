@@ -64,9 +64,9 @@ class LDA(val numTopics: Int,
     }
   }
   
-  private def updateGammaD(
-      numIter: Int, wordIndices: DenseVector[Int], counts: DenseVector[Int],
-      alpha: DenseVector[Double], expELogBeta: DenseMatrix[Double], 
+  private def updateGammaD(numIter: Int, wordIndices: DenseVector[Int], 
+      counts: DenseVector[Int], alpha: DenseVector[Double], 
+      expELogBeta: DenseMatrix[Double], suffStats: DenseMatrix[Double],
       phiNormD: DenseVector[Double], expELogThetaD: DenseVector[Double],
       gammaD: DenseVector[Double]) = {
     
@@ -89,42 +89,16 @@ class LDA(val numTopics: Int,
       getPhiNorm(wordIndices, expELogThetaD, expELogBeta, phiNormD)
       dotProduct := zeros
     }
-  }
-  
-  private def updateEtaK(docs: CSCMatrix[Int], beta0K: DenseVector[Double], 
-      phiNorm: DenseVector[Double], expELogThetaK: DenseVector[Double], 
-      expELogBetaK: DenseVector[Double], etaK: DenseVector[Double]) = {
-    val docPtrs = docs.colPtrs
-    val wordIndices = DenseVector(docs.rowIndices)
-    val counts = DenseVector(docs.data)
-    val numDocs = docs.cols
-    val numWords = docs.rows
-    var w = 0
-    while (w < numWords) {
-      etaK(w) = 0
-      w += 1
+    var i = 0
+    while (i < docLength) {
+      suffStats(::, wordIndices(i)) :+= expELogThetaD:*(counts(i)/phiNormD(i))
+      i += 1
     }
-    var d = 0
-    while (d < numDocs) {
-      var ii = docPtrs(d)
-      while (ii < docPtrs(d+1)) {
-        etaK(wordIndices(ii)) += expELogThetaK(d)*counts(ii)/phiNorm(ii)
-        ii += 1
-      }
-      d += 1
-    }
-    w = 0
-    while(w < numWords) {
-      etaK(w) = etaK(w)*expELogBetaK(w) + beta0K(w)
-      w += 1
-    }
-    MathFunctions.eDirExp(etaK, expELogBetaK)
   }
   
   private def updateEtaK(beta0K: DenseVector[Double], suffStatsK: DenseVector[Double],
       expELogBetaK: DenseVector[Double], etaK: DenseVector[Double]) = {
     etaK := beta0K :+ (suffStatsK:*expELogBetaK)
-    MathFunctions.eDirExp(etaK, expELogBetaK)
   }
   
   def runVB(numIters: Int, docs: CSCMatrix[Int], beta0: Double, multicore: Boolean,
@@ -154,37 +128,34 @@ class LDA(val numTopics: Int,
     val elbos = new Array[Double](numIters)
     val times = new Array[Double](numIters)
     val topicIndices = 0 until numTopics
-    if (multicore) {
-      for (k <- topicIndices.par) {
-        MathFunctions.eDirExp(eta(k, ::).t, expELogBeta(k, ::).t)
-      }
-    } else {
-      for (k <- topicIndices) {
-        MathFunctions.eDirExp(eta(k, ::).t, expELogBeta(k, ::).t)
-      }
-    }
     val docIndices = (0 until numDocs).filter(d => (docPtrs(d+1) - docPtrs(d)) > 0)
     for (iter <- 0 until numIters) {
       val startTime = System.currentTimeMillis()
       if (multicore) {
+        for (k <- topicIndices.par) {
+          MathFunctions.eDirExp(eta(k, ::).t, expELogBeta(k, ::).t)
+          eta(k, ::).t := zeros
+        }
         for (d <- docIndices.par) {
           val range = docPtrs(d) until docPtrs(d+1)
-          updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, 
+          updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, eta,
               phiNorm(range), expELogTheta(::, d), gamma(::, d))
         }
         for (k <- topicIndices.par) {
-          updateEtaK(docs, beta0(k, ::).t, phiNorm, expELogTheta(k, ::).t, 
-              expELogBeta(k, ::).t, eta(k, ::).t)
+          updateEtaK(beta0(k, ::).t, eta(k, ::).t, expELogBeta(k, ::).t, eta(k, ::).t)
         }
       } else {
+        for (k <- topicIndices) {
+          MathFunctions.eDirExp(eta(k, ::).t, expELogBeta(k, ::).t)
+          eta(k, ::).t := zeros
+        }
         for (d <- docIndices) {
           val range = docPtrs(d) until docPtrs(d+1)
-          updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, 
+          updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, eta,
               phiNorm(range), expELogTheta(::, d), gamma(::, d))
         }
         for (k <- topicIndices) {
-          updateEtaK(docs, beta0(k, ::).t, phiNorm, expELogTheta(k, ::).t, 
-              expELogBeta(k, ::).t, eta(k, ::).t)
+          updateEtaK(beta0(k, ::).t, eta(k, ::).t, expELogBeta(k, ::).t, eta(k, ::).t)
         }
       }
       val elapsed = (System.currentTimeMillis - startTime)*0.001
