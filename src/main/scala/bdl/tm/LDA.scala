@@ -17,6 +17,42 @@ class LDA(val numTopics: Int,
           val eta: DenseMatrix[Double],
           val alpha: DenseVector[Double]) {
   
+  private def updatePhiD(wordIndices: DenseVector[Int], eLogThetaD: DenseVector[Double],
+      eLogBeta: DenseMatrix[Double], phiD: DenseMatrix[Double]) {
+    val docLength = wordIndices.length
+    var i = 0
+    while (i < docLength) {
+      val phiDW = eLogThetaD + eLogBeta(::, wordIndices(i))
+      phiDW := exp(phiDW - max(phiDW))
+      phiDW :/= sum(phiDW)
+      phiD(::, i) := phiDW
+      i += 1
+    }
+  }
+  
+  private def update(numIter: Int, wordIndices: DenseVector[Int], 
+      counts: DenseVector[Int], alpha: DenseVector[Double], 
+      eLogBeta: DenseMatrix[Double], phiD: DenseMatrix[Double], 
+      eLogThetaD: DenseVector[Double], eta: DenseMatrix[Double], 
+      gammaD: DenseVector[Double]) = {
+    MathFunctions.dirExp(gammaD, eLogThetaD)
+    updatePhiD(wordIndices, eLogThetaD, eLogBeta, phiD)
+    val lastGammaD = DenseVector.zeros[Double](numTopics)
+    val docLength = counts.length
+    val doubleCounts = DenseVector.tabulate[Double](docLength)(counts(_))
+    for (inner <- 0 until numIter if (mean(abs(gammaD - lastGammaD)) > 0.001)) {
+      lastGammaD := gammaD
+      gammaD := alpha + (phiD*doubleCounts)
+      MathFunctions.dirExp(gammaD, eLogThetaD)
+      updatePhiD(wordIndices, eLogThetaD, eLogBeta, phiD)
+    }
+    var i = 0
+    while (i < docLength) {
+      eta(::, wordIndices(i)) :+= phiD(::, i):*doubleCounts(i)
+      i += 1
+    }
+  }
+  
   private def getPhiNorm(wordIndices: DenseVector[Int], 
       expELogThetaD: DenseVector[Double], expELogBeta: DenseMatrix[Double], 
       phiNorm: DenseVector[Double]) {
@@ -141,7 +177,7 @@ class LDA(val numTopics: Int,
   
   private def getScore(gammaD: DenseVector[Double], eLogThetaD: DenseVector[Double],
       alpha: DenseVector[Double]): Double = {
-    sum((alpha - gammaD):*eLogThetaD + lgamma(gammaD)) - lgamma(sum(gammaD))
+    sum(((alpha - gammaD):*eLogThetaD) + lgamma(gammaD)) - lgamma(sum(gammaD))
   }
   
   private def getTokensScore(range: Range, eLogThetaD: DenseVector[Double], 
@@ -246,10 +282,10 @@ object LDA {
     val inputDocsPath = prefix + "docword.nips.txt"
     val dictPath = prefix + "vocab.nips.txt"
     val outputDir = "output/LDA_Local/NIPS/"
-    val numTopics = 10
+    val numTopics = 20
     val numIters = 20
-    val alphaInit = 1.0/numTopics
-    val betaInit = 1.0/numTopics
+    val alphaInit = 50.0/numTopics
+    val betaInit = 0.001
     val multicore = false
     val docs = toCSCMatrix(inputDocsPath)
     val numWords = docs.rows
