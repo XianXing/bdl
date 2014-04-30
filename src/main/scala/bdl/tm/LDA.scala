@@ -12,151 +12,112 @@ import org.apache.commons.math3.distribution._
 
 import utilities.MathFunctions
 
-class LDA(val numTopics: Int, 
-          val gamma: DenseMatrix[Double], 
-          val eta: DenseMatrix[Double],
-          val alpha: DenseVector[Double]) {
-  
-  private def updatePhiD(wordIndices: DenseVector[Int], eLogThetaD: DenseVector[Double],
-      eLogBeta: DenseMatrix[Double], phiD: DenseMatrix[Double]) {
-    val docLength = wordIndices.length
-    var i = 0
-    while (i < docLength) {
-      val phiDW = eLogThetaD + eLogBeta(::, wordIndices(i))
-      phiDW := exp(phiDW - max(phiDW))
-      phiDW :/= sum(phiDW)
-      phiD(::, i) := phiDW
-      i += 1
-    }
-  }
-  
-  private def update(numIter: Int, wordIndices: DenseVector[Int], 
-      counts: DenseVector[Int], alpha: DenseVector[Double], 
-      eLogBeta: DenseMatrix[Double], phiD: DenseMatrix[Double], 
-      eLogThetaD: DenseVector[Double], eta: DenseMatrix[Double], 
-      gammaD: DenseVector[Double]) = {
-    MathFunctions.dirExp(gammaD, eLogThetaD)
-    updatePhiD(wordIndices, eLogThetaD, eLogBeta, phiD)
-    val lastGammaD = DenseVector.zeros[Double](numTopics)
-    val docLength = counts.length
-    val doubleCounts = DenseVector.tabulate[Double](docLength)(counts(_))
-    for (inner <- 0 until numIter if (mean(abs(gammaD - lastGammaD)) > 0.001)) {
-      lastGammaD := gammaD
-      gammaD := alpha + (phiD*doubleCounts)
-      MathFunctions.dirExp(gammaD, eLogThetaD)
-      updatePhiD(wordIndices, eLogThetaD, eLogBeta, phiD)
-    }
-    var i = 0
-    while (i < docLength) {
-      eta(::, wordIndices(i)) :+= phiD(::, i):*doubleCounts(i)
-      i += 1
-    }
-  }
-  
-  private def getPhiNorm(wordIndices: DenseVector[Int], 
-      expELogThetaD: DenseVector[Double], expELogBeta: DenseMatrix[Double], 
-      phiNorm: DenseVector[Double]) {
-    val length = wordIndices.length
-    var i = 0
-    while (i < length) {
-      phiNorm(i) = expELogThetaD.dot(expELogBeta(::, wordIndices(i))) + 1e-100
-      i += 1
-    }
-  }
-  
-  private def updateGammaD(numIter: Int, wordIndices: DenseVector[Int], 
-      counts: DenseVector[Int], alpha: DenseVector[Double], 
-      expELogBeta: DenseMatrix[Double], suffStats: DenseMatrix[Double],
-      phiNormD: DenseVector[Double], expELogThetaD: DenseVector[Double],
-      gammaD: DenseVector[Double]) = {
+class LDA(val eta: DenseMatrix[Double], val alpha: DenseVector[Double]) {
     
-    MathFunctions.eDirExp(gammaD, expELogThetaD)
-    getPhiNorm(wordIndices, expELogThetaD, expELogBeta, phiNormD)
-    val zeros = DenseVector.zeros[Double](numTopics)
-    val lastGammaD = DenseVector.zeros[Double](numTopics)
-    val dotProduct = DenseVector.zeros[Double](numTopics)
-    val docLength = wordIndices.length
-    for (inner <- 0 until numIter if (mean(abs(gammaD - lastGammaD)) > 0.001)) {
-      lastGammaD := gammaD
-      gammaD := alpha
-      var i = 0
-      while (i < docLength) {
-        dotProduct :+= expELogBeta(::, wordIndices(i)):*(counts(i)/phiNormD(i))
-        i += 1
-      }
-      gammaD :+= expELogThetaD:*dotProduct
-      MathFunctions.eDirExp(gammaD, expELogThetaD)
-      getPhiNorm(wordIndices, expELogThetaD, expELogBeta, phiNormD)
-      dotProduct := zeros
-    }
-    var i = 0
-    while (i < docLength) {
-      suffStats(::, wordIndices(i)) :+= expELogThetaD:*(counts(i)/phiNormD(i))
-      i += 1
-    }
-  }
+  val numTopics = eta.rows
+  val numWords = eta.cols
   
   private def updateEtaK(beta0K: DenseVector[Double], suffStatsK: DenseVector[Double],
       expELogBetaK: DenseVector[Double], etaK: DenseVector[Double]) = {
     etaK := beta0K :+ (suffStatsK:*expELogBetaK)
   }
   
-  def runVB(numIters: Int, docs: CSCMatrix[Int], beta0: Double, multicore: Boolean,
+  private def updateAlphaBlei(numIter: Int, numDocs: Int, 
+      suffStats: DenseVector[Double]) {
+    //only can be used when alpha is a scalar
+    val df = DenseVector.ones[Double](numTopics)
+    val d2f = DenseVector.ones[Double](numTopics)
+    val logAlpha = log(alpha)
+    val D = numDocs.toDouble
+    for (iter <- 0 until numIter if (mean(abs(df)) > 1e-3)) {
+      df := MathFunctions.dirExp(alpha)
+      df :*= -D 
+      df :+= suffStats
+      d2f := (-trigamma(alpha)+trigamma(sum(alpha))):*D
+      logAlpha :-= df:/(d2f :* alpha + df)
+      alpha := exp(logAlpha)
+      val f = D*(lgamma(sum(alpha)) - sum(lgamma(alpha))) + sum((alpha-1.0):*suffStats)
+      println("updating alpha iter: " + iter + "\t f: " + f + " \t df: " + df)
+    }
+  }
+  
+  private def updateAlpha(numIter: Int, numDocs: Int, suffStats: DenseVector[Double]) {
+    val df = DenseVector.ones[Double](numTopics)
+    val q = DenseVector.ones[Double](numTopics)
+    val ones = DenseVector.ones[Double](numTopics)
+    val D = numDocs.toDouble
+    println("alpha suff stats: " + exp(suffStats:/D))
+    for (iter <- 0 until numIter if (mean(abs(df)) > 1e-3)) {
+      df := MathFunctions.dirExp(alpha)
+      df :*= -D 
+      df :+= suffStats
+      q := -trigamma(alpha):*D
+      val z = trigamma(sum(alpha))*D
+      val b = sum(df:/q)/(1/z + sum(ones:/q))
+      alpha :-= (df-b):/q
+      alpha := alpha.map(a => if (a <= 0) 1e-5 else a)
+//    val f = D*(lgamma(sum(alpha)) - sum(lgamma(alpha))) + sum((alpha-1.0):*suffStats)
+//      println("updating alpha iter: " + iter + "\t f: " + f + " \t df: " + df)
+    }
+  }
+  
+  def runVB(outerIters: Int, innerIters: Int, docs: Array[Document], 
+      beta0: Double, multicore: Boolean, emBayes: Boolean, logger: BufferedWriter) {
+    val newBeta0 = DenseMatrix.fill(numTopics, numWords)(beta0)
+    runVB(outerIters, innerIters, docs, newBeta0, multicore, emBayes, logger)
+  }
+  
+  def runVB(outerIters: Int, innerIters: Int, docs: Array[Document], 
+      beta0: DenseMatrix[Double], multicore: Boolean, emBayes: Boolean, 
       logger: BufferedWriter) {
-    val newBeta0 = DenseMatrix.fill(numTopics, docs.rows)(beta0)
-    runVB(numIters, docs, newBeta0, multicore, logger)
-  }
-  
-  def runVB(numIters: Int, docs: CSCMatrix[Int], beta0: DenseVector[Double], 
-      multicore: Boolean, logger: BufferedWriter) {
-    val newBeta0 = DenseMatrix.tabulate(numTopics, docs.rows)((k, w) => beta0(w))
-    runVB(numIters, docs, newBeta0, multicore, logger)
-  }
-  
-  def runVB(numIters: Int, docs: CSCMatrix[Int], beta0: DenseMatrix[Double], 
-      multicore: Boolean, logger: BufferedWriter) {
-    val numDocs = docs.cols
-    val numWords = docs.rows
-    val nnz = docs.activeSize
-    val docPtrs = docs.colPtrs
-    val wordIndices = DenseVector(docs.rowIndices)
-    val counts = DenseVector(docs.data)
-    val expELogTheta = DenseMatrix.zeros[Double](numTopics, numDocs)
-    val phiNorm = DenseVector.zeros[Double](nnz)
+    
+    val numDocs = docs.length
     val expELogBeta = DenseMatrix.zeros[Double](numTopics, numWords)
     val zeros = DenseVector.zeros[Double](numWords)
-    val elbos = new Array[Double](numIters)
-    val times = new Array[Double](numIters)
+    val alphaSuffStats = DenseVector.zeros[Double](numTopics)
+    val phiNorm = docs.map(doc => DenseVector.zeros[Double](doc.length))
+    val elbos = new Array[Double](outerIters)
+    val times = new Array[Double](outerIters)
     val topicIndices = 0 until numTopics
-    val docIndices = (0 until numDocs).filter(d => (docPtrs(d+1) - docPtrs(d)) > 0)
-    for (iter <- 0 until numIters) {
+    val topicIndicesPar = topicIndices.par
+    val docIndices = (0 until numDocs).filter(d => docs(d).length > 0)
+    val docIndicesPar = docIndices.par
+    for (iter <- 0 until outerIters) {
       val startTime = System.currentTimeMillis()
       if (multicore) {
-        for (k <- topicIndices.par) {
-          MathFunctions.eDirExp(eta(k, ::).t, expELogBeta(k, ::).t)
+        for (k <- topicIndicesPar) {
+          expELogBeta(k, ::).t := MathFunctions.eDirExp(eta(k, ::).t)
           eta(k, ::).t := zeros
         }
-        for (d <- docIndices.par) {
-          val range = docPtrs(d) until docPtrs(d+1)
-          updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, eta,
-              phiNorm(range), expELogTheta(::, d), gamma(::, d))
+        for (d <- docIndicesPar) {
+          docs(d).updateGamma(innerIters, alpha, expELogBeta, phiNorm(d), eta)
         }
-        for (k <- topicIndices.par) {
+        if (emBayes) {
+          alphaSuffStats := 
+            docIndicesPar.map(d => MathFunctions.dirExp(docs(d).gamma)).reduce(_+=_)
+        }
+        for (k <- topicIndicesPar) {
           updateEtaK(beta0(k, ::).t, eta(k, ::).t, expELogBeta(k, ::).t, eta(k, ::).t)
         }
       } else {
         for (k <- topicIndices) {
-          MathFunctions.eDirExp(eta(k, ::).t, expELogBeta(k, ::).t)
+          expELogBeta(k, ::).t := MathFunctions.eDirExp(eta(k, ::).t)
           eta(k, ::).t := zeros
         }
         for (d <- docIndices) {
-          val range = docPtrs(d) until docPtrs(d+1)
-          updateGammaD(1, wordIndices(range), counts(range), alpha, expELogBeta, eta,
-              phiNorm(range), expELogTheta(::, d), gamma(::, d))
+          docs(d).updateGamma(innerIters, alpha, expELogBeta, phiNorm(d), eta)
+        }
+        if (emBayes) {
+          alphaSuffStats := 
+            docIndicesPar.map(d => MathFunctions.dirExp(docs(d).gamma)).reduce(_+=_)
         }
         for (k <- topicIndices) {
           updateEtaK(beta0(k, ::).t, eta(k, ::).t, expELogBeta(k, ::).t, eta(k, ::).t)
         }
+      }
+      if (emBayes) {
+        updateAlpha(100, numDocs, alphaSuffStats)
+        println("alpha: " + alpha)
       }
       val elapsed = (System.currentTimeMillis - startTime)*0.001
       val elbo = approx_bound(docs, alpha, beta0, multicore)
@@ -173,55 +134,40 @@ class LDA(val numTopics: Int,
     sum(((alpha - gammaD):*eLogThetaD) + lgamma(gammaD)) - lgamma(sum(gammaD))
   }
   
-  private def getTokensScore(range: Range, eLogThetaD: DenseVector[Double], 
-    eLogBeta: DenseMatrix[Double], wordIndices: Array[Int], counts: Array[Int])
-    : Double = {
-    range.map{ p =>
-      val logPhiDW = eLogThetaD + eLogBeta(::, wordIndices(p))
-      val maxLogPhiDw = max(logPhiDW)
-      (log(sum(exp(logPhiDW - maxLogPhiDw))) + maxLogPhiDw)*counts(p)
-    }.sum
-  }
-  
-  def approx_bound(docs: CSCMatrix[Int], alpha: DenseVector[Double], 
+  def approx_bound(docs: Array[Document], alpha: DenseVector[Double], 
       beta0: DenseMatrix[Double], multicore: Boolean): Double = {
-    val numDocs = docs.cols
-    val numWords = docs.rows
-    val docPtrs = docs.colPtrs
-    val nnz = docs.activeSize
-    val wordIndices = docs.rowIndices
-    val counts = docs.data
+    val numDocs = docs.length
     val eLogThetaD = DenseVector.zeros[Double](numTopics)
     val eLogBeta = DenseMatrix.zeros[Double](numTopics, numWords)
-    val docIndices = (0 until numDocs).filter(d => (docPtrs(d+1) - docPtrs(d)) > 0)
     val topicIndices = 0 until numTopics
+    val topicIndicesPar = topicIndices.par
+    val docIndices = (0 until numDocs).filter(d => docs(d).length > 0)
+    val docIndicesPar = docIndices.par
     var score = 0.0
     if (multicore) {
       val topicScore = DenseVector.zeros[Double](numTopics)
-      for (k <- topicIndices.par) {
-        MathFunctions.dirExp(eta(k, ::).t, eLogBeta(k, ::).t)
+      for (k <- topicIndicesPar) {
+        eLogBeta(k, ::).t := MathFunctions.dirExp(eta(k, ::).t)
         topicScore(k) = getScore(eta(k, ::).t, eLogBeta(k, ::).t, beta0(k, ::).t)
           + lgamma(sum(beta0(k, ::).t)) - sum(lgamma(beta0(k, ::).t))
       }
       val docScore = DenseVector.zeros[Double](numDocs)
-      for (d <- docIndices.par) {
-        MathFunctions.dirExp(gamma(::, d), eLogThetaD)
-        val range = docPtrs(d) until docPtrs(d+1)
-        docScore(d) = getTokensScore(range, eLogThetaD, eLogBeta, wordIndices, counts) 
-          + getScore(gamma(::, d), eLogThetaD, alpha)
+      for (d <- docIndicesPar) {
+        eLogThetaD := MathFunctions.dirExp(docs(d).gamma)
+        docScore(d) = docs(d).getScore(eLogThetaD, eLogBeta) + 
+          getScore(docs(d).gamma, eLogThetaD, alpha)
       }
       score += sum(topicScore) + sum(docScore)
     } else {
       for (k <- topicIndices) {
-        MathFunctions.dirExp(eta(k, ::).t, eLogBeta(k, ::).t)
+        eLogBeta(k, ::).t := MathFunctions.dirExp(eta(k, ::).t)
         score += getScore(eta(k, ::).t, eLogBeta(k, ::).t, beta0(k, ::).t) + 
           lgamma(sum(beta0(k, ::).t)) - sum(lgamma(beta0(k, ::).t))
       }
       for (d <- docIndices) {
-        MathFunctions.dirExp(gamma(::, d), eLogThetaD)
-        val range = docPtrs(d) until docPtrs(d+1)
-        score += getTokensScore(range, eLogThetaD, eLogBeta, wordIndices, counts) + 
-          getScore(gamma(::, d), eLogThetaD, alpha)
+        eLogThetaD := MathFunctions.dirExp(docs(d).gamma)
+        score += docs(d).getScore(eLogThetaD, eLogBeta)  + 
+          getScore(docs(d).gamma, eLogThetaD, alpha)
       }
     }
     score += numDocs*(lgamma(sum(alpha)) - sum(lgamma(alpha)))
@@ -233,7 +179,6 @@ class LDA(val numTopics: Int,
     for (k <- 0 until numTopics) {
       val pairs = (eta(k, ::).t:/sum(eta(k, ::).t))
         .toArray.zipWithIndex.sortWith((a,b) => a._1 > b._1)
-//      println(f"$name%s is $height%2.2f meters tall")  // James is 1.90 meters tall
       logger.write(f"topic $k%d:\n")
       for (i <- 0 until numWordsPerTopic) {
         val word = dict(pairs(i)._2)
@@ -247,48 +192,36 @@ class LDA(val numTopics: Int,
 
 object LDA {
   
-  def apply(numTopics: Int, numDocs: Int, numWords: Int, alphaInit: Double) = {
+  def apply(numTopics: Int, numWords: Int, alphaInit: Double) = {
     val gd = new GammaDistribution(100, 1./100)
     gd.reseedRandomGenerator(1234567890L)
-    val gamma = DenseMatrix.fill(numTopics, numDocs)(gd.sample)
     val eta = DenseMatrix.fill(numTopics, numWords)(gd.sample)
     val alpha = DenseVector.fill(numTopics)(alphaInit)
-    new LDA(numTopics, gamma, eta, alpha)
-  }
-  
-  def toCSCMatrix(inputDocsPath: String): CSCMatrix[Int] = {
-    val lines = Source.fromFile(inputDocsPath).getLines
-    val numDocs = lines.next.toInt
-    val numWords = lines.next.toInt
-    val nnz = lines.next.toInt
-    val docsBuilder = new CSCMatrix.Builder[Int](rows=numWords, cols=numDocs)
-    for (line <- lines) {
-      val tokens = line.split(" ")
-      docsBuilder.add(tokens(1).toInt - 1, tokens(0).toInt - 1, tokens(2).toInt)
-    }
-    docsBuilder.result
+    new LDA(eta, alpha)
   }
   
   def main(args : Array[String]) {
     
     val prefix = "/Users/xianxingzhang/Documents/workspace/datasets/Bags_Of_Words/"
-    val inputDocsPath = prefix + "docword.nips.txt"
+    val inputDocsPath = prefix + "nips_processed"
     val dictPath = prefix + "vocab.nips.txt"
     val outputDir = "output/LDA_Local/NIPS/"
     val numTopics = 20
-    val numIters = 20
+    val numWords = 12419
+    val outerIters = 20
+    val innerIters = 5
     val alphaInit = 50.0/numTopics
+    val emBayes = false
     val betaInit = 0.001
-    val multicore = true
-    val docs = toCSCMatrix(inputDocsPath)
-    val numWords = docs.rows
-    val numDocs = docs.cols
+    val multicore = false
     val startTime = System.currentTimeMillis
-    val lda = LDA(numTopics, numDocs, numWords, alphaInit)
-    val outputPrefix = outputDir + "T_" + numTopics + "_ITER_" + numIters
+    val docs = preprocess.TM.toCorpus(inputDocsPath, numTopics)
+    val lda = LDA(numTopics, numWords, alphaInit)
+    val outputPrefix = outputDir + "T_" + numTopics + "_OI_" + outerIters + 
+      "_II_" + innerIters + "_EB_" + emBayes + "_MC_" + multicore
     val elboFileName = outputPrefix + "_ELBO.txt"
     val elboLogger = new BufferedWriter(new FileWriter(new File(elboFileName)))
-    lda.runVB(numIters, docs, betaInit, multicore, elboLogger)
+    lda.runVB(outerIters, innerIters, docs, betaInit, multicore, emBayes, elboLogger)
     elboLogger.close
     val topicsFileName = outputPrefix + "_Topics.txt"
     val topicsLogger = new BufferedWriter(new FileWriter(new File(topicsFileName)))
