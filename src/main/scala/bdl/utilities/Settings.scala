@@ -11,6 +11,7 @@ object Settings {
   val TRAINING_OPTION = "train"
   val TESTING_OPTION = "test"
   val VALIDATING_OPTION = "validate"
+  val DICTIONARY_PATH_OPTION = "dict"
   val OUTPUT_OPTION = "output"
   val RUNNING_MODE_OPTION = "mode"
   val EXACT_OPTION = "exact"
@@ -52,6 +53,7 @@ object Settings {
   val MH_OPTION = "MH"
   val FIRST_ORDER_OPTION = "first_order"
   val ALPHA_OPTION = "alpha"
+  val BETA_OPTION = "beta0"
   val KAPPA_OPTION = "kappa"
   val NUM_ROW_BLOCKS_OPTION = "row_blocks"
   val NUM_COL_BLOCKS_OPTION = "col_blocks"
@@ -69,7 +71,7 @@ object Settings {
   val GAMMA_INIT_OPTION = "gamma"
   val LAMBDA_R_INIT_OPTION = "lambda_r"
   val LAMBDA_C_INIT_OPTION = "lambda_c"
-  val NUM_LATENT_FACTORS_OPTION = "K"  
+  val NUM_LATENT_FACTORS_OPTION = "K"
   val NUM_SLICES_OPTION = "num_slices"
   val NUM_REDUCERS_OPTION = "num_reducers"
   val OUTER_ITERATION_OPTION = "outer_iter"
@@ -132,4 +134,7 @@ object Settings {
   val STOPPING_CRITERIA_OPTION = "stop_crt"
   val MORE_PARA_OPTION = "more_para"
   val WEIGHTED_REG_OPTION = "weighted_reg"
+    
+  val NUM_TOPICS_OPTION = "num_topics"
+  val INIT_RATIO_OPTION = "init_ratio"
 }

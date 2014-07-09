@@ -376,8 +376,7 @@ object PMF {
     bwResult.write(globalRMSE.mkString("[", ", ", "];") + '\n')
     bwResult.write(times.mkString("[", ", ", "];") + '\n')
     bwResult.close()
-    println("Total time elapsed " 
-        + (System.currentTimeMillis()-startTime)*0.001 + "(s)")
+    println("Total time elapsed " + (System.currentTimeMillis-startTime)*0.001 + "(s)")
     System.exit(0)
   }
 }

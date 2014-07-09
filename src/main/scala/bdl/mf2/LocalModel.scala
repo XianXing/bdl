@@ -41,13 +41,13 @@ class LocalModel (val factorsR: Array[Array[Float]], val factorsC: Array[Array[F
     LocalModel.getStats(factorsC, lagsC, gammaC, map, ptr, multicore)
   }
   
-  def updateLagR(priorsR: Array[Array[Float]], multicore: Boolean): LocalModel = {
-    LocalModel.updateLag(factorsR, lagsR, priorsR, multicore)
+  def updateLagPriorsR(priorsR: Array[Array[Float]], multicore: Boolean): LocalModel = {
+    LocalModel.updateLagPriors(factorsR, lagsR, priorsR, multicore)
     this
   }
   
-  def updateLagC(priorsC: Array[Array[Float]], multicore: Boolean): LocalModel = {
-    LocalModel.updateLag(factorsC, lagsC, priorsC, multicore)
+  def updateLagPriorsC(priorsC: Array[Array[Float]], multicore: Boolean): LocalModel = {
+    LocalModel.updateLagPriors(factorsC, lagsC, priorsC, multicore)
     this
   }
   
@@ -246,7 +246,7 @@ object LocalModel {
     statsR
   } // end of getStats
   
-  def updateLag(factorsR: Array[Array[Float]], lagsR: Array[Array[Float]], 
+  def updateLagPriors(factorsR: Array[Array[Float]], lagsR: Array[Array[Float]], 
     priorsR: Array[Array[Float]], multicore: Boolean) = {
     //update the scaled Lagrangian multipilers
     val numFactors = lagsR.length
@@ -277,7 +277,7 @@ object LocalModel {
         r += 1
       }
     }
-  } //end of updateLag
+  } //end of updateLagPriors
   
   def getNumObs(ptr: Array[Int]): Array[Int] = {
     val length = ptr.length - 1

@@ -238,8 +238,8 @@ object DivideAndConquer {
             val priorsR = DivideAndConquer.toLocal(factorsR, localData.rowMap, null)
             val priorsC = DivideAndConquer.toLocal(factorsC, localData.colMap, null)
             //inplace dual update using sideeffect
-            if (hasRowEC) localModel.updateLagR(priorsR, multicore)
-            if (hasColEC) localModel.updateLagC(priorsC, multicore)
+            if (hasRowEC) localModel.updateLagPriorsR(priorsR, multicore)
+            if (hasColEC) localModel.updateLagPriorsC(priorsC, multicore)
             localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
               weightedReg, multicore, priorsR, priorsC)
           }
@@ -249,7 +249,7 @@ object DivideAndConquer {
         data.join(localModels).join(disFactorsR).mapValues{
           case(((localData, localModel), factorsR)) => {
             val priorsR = DivideAndConquer.toLocal(factorsR, localData.rowMap, null)
-            if (hasRowEC) localModel.updateLagR(priorsR, multicore)
+            if (hasRowEC) localModel.updateLagPriorsR(priorsR, multicore)
             localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
               weightedReg, multicore, priorsR, priorsC = null)
           }
@@ -259,7 +259,7 @@ object DivideAndConquer {
         data.join(localModels).join(disFactorsC).mapValues{
           case(((localData, localModel), factorsC)) => {
             val priorsC = DivideAndConquer.toLocal(factorsC, localData.colMap, null)
-            if (hasColEC) localModel.updateLagC(priorsC, multicore)
+            if (hasColEC) localModel.updateLagPriorsC(priorsC, multicore)
             localModel.train(localData, optType, numIter, stopCrt, isVB, emBayes,
               weightedReg, multicore, priorsR = null, priorsC)
           }
